@@ -1,0 +1,21 @@
+{
+  "$schema": "../exact/scripts/app.schema.json",
+  "name": "Laporin",
+  "short_name": "Laporin",
+  "id": "id.laporin.exact",
+  "start_url": "/",
+  "display": "standalone",
+  "app": {
+    "id": "id.laporin.exact",
+    "name": "Laporin"
+  },
+  "host": {
+    "web": {},
+    "android": {}
+  },
+  "deploy": {
+    "store": {
+      "web": "0"
+    }
+  }
+}

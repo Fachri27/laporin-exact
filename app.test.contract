@@ -1,0 +1,40 @@
+test "tab bawah berpindah dan tombol LAPOR membuka formulir"
+  tap "tab-peta"
+  expect state nav.tab == "peta"
+  tap "tab-profil"
+  expect state nav.tab == "profil"
+  tap "tombol-lapor"
+  clock settle
+  expect tree has "kirim"
+
+test "formulir menolak judul kosong lalu deskripsi kosong"
+  tap "tombol-lapor"
+  clock settle
+  tap "kirim"
+  expect text "galat" == "Isi judul singkat dulu."
+  type "judul" "Asap tebal di tepi jalan"
+  tap "kirim"
+  expect text "galat" == "Ceritakan kondisinya sedikit."
+
+test "laporan tersimpan inti Rust dan tampil di Profil"
+  tap "tombol-lapor"
+  clock settle
+  type "judul" "Asap tebal di tepi jalan"
+  type "deskripsi" "Asap dari arah timur sejak pagi."
+  type "nama" "Fachri"
+  tap "kirim"
+  clock data
+  clock settle
+  expect tree has "terima-kasih"
+  tap "pantau-status"
+  clock data
+  clock settle
+  expect state nav.tab == "profil"
+  expect state saya.0 .judul == "Asap tebal di tepi jalan"
+  expect state saya.0 .pengirim == "Fachri"
+  expect state saya.0 .status == "menunggu"
+
+test "umpan yang gagal dimuat menawarkan coba lagi"
+  fail fetch "https://fire.nusantara.earth"
+  clock data
+  expect tree has "coba-lagi"

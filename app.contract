@@ -1,0 +1,848 @@
+// Laporin di Exact: tampilan laporin-apps (bahasa rupa SAKSI) di atas inti Rust (data/).
+// Setiap sumber data di bawah dijawab oleh data/src/lib.rs: umpan & komentar dari
+// fire.nusantara.earth, hotspot dari geoplatform.nusantara.earth, laporan saya di app:/data.
+
+font "Poppins"
+  400 = "assets/fonts/Poppins-Regular.ttf"
+  500 = "assets/fonts/Poppins-Medium.ttf"
+  600 = "assets/fonts/Poppins-SemiBold.ttf"
+  700 = "assets/fonts/Poppins-Bold.ttf"
+
+routes nav
+  tab beranda "/"
+    laporan "/laporan/:id"
+    cari "/cari"
+    lapor "/lapor"
+    terkirim "/terkirim"
+  tab peta "/peta"
+  tab siaran "/siaran"
+  tab profil "/profil"
+
+shape Waktu
+  epochAtZero: number
+  utcOffset: number
+
+shape Laporan
+  id: string
+  slug: string
+  judul: string
+  pulau: string
+  tempat: string
+  tanggal: string
+  tanggalPendek: string
+  lokasi: string
+  lintang: string
+  bujur: string
+  deskripsi: string
+  sampul: string
+  sampulKecil: string
+  kredit: string
+  inisial: string
+  jumlahMedia: number
+  adaVideo: bool
+  vertikal: bool
+  suka: number
+  komentar: number
+
+shape Pulau
+  nama: string
+  jumlah: number
+
+shape Umpan
+  laporan: Laporan[]
+  pulau: Pulau[]
+
+shape Komentar
+  id: string
+  nama: string
+  inisial: string
+  isi: string
+  waktu: string
+  balasan: number
+
+shape Peringkat
+  nama: string
+  jumlah: number
+  persen: number
+  tinggi: number
+
+shape Satelit
+  nama: string
+  sensor: string
+  jumlah: number
+  tinggi: number
+  sedang: number
+  rendah: number
+
+shape Hotspot
+  hari: string
+  diperbarui: string
+  total: number
+  tinggi: number
+  sedang: number
+  rendah: number
+  malam: number
+  satelit: Satelit[]
+  provinsi: Peringkat[]
+  kabupaten: Peringkat[]
+
+shape LaporanSaya
+  id: string
+  judul: string
+  deskripsi: string
+  pengirim: string
+  status: string
+  dibuat: string
+
+shape Balasan
+  ok: bool
+  galat: string
+
+fn hitung(n: number): string = n >= 1000 ? `${(n / 1000).toFixed(1).replaceAll(".", ",")} rb` : n.toString()
+fn ribuan(n: number): string = n >= 1000 ? `${floor(n / 1000)}.${(n % 1000 + 1000).toString().slice(1)}` : n.toString()
+fn labelUrut(u: string): string = u == "komentar" ? "Paling dikomentari" : u == "suka" ? "Paling disukai" : "Terbaru"
+fn cocok(l: Laporan, q: string): bool = l.judul.toLowerCase().includes(q.trim().toLowerCase()) or l.lokasi.toLowerCase().includes(q.trim().toLowerCase()) or l.tempat.toLowerCase().includes(q.trim().toLowerCase())
+fn statusLabel(s: string): string = s == "tayang" ? "TERVERIFIKASI" : s == "ditolak" ? "DITOLAK" : "SEDANG DITINJAU"
+
+component Laporin
+  state pulau = ""
+  state urutan = "terbaru"
+  state kueri = ""
+  state judul = ""
+  state deskripsi = ""
+  state nama = ""
+  state anonim = false
+  state galat = ""
+  resource waktu = exactTime() as shape Waktu
+  resource umpan = muatUmpan() as shape Umpan else empty()
+  resource hotspot = muatHotspot() as shape Hotspot else empty()
+  resource saya = muatLaporanSaya() as shape LaporanSaya[] else empty()
+  derive idTerbuka = top(nav).name == "laporan" ? top(nav).params.id : ""
+  resource komentar = muatKomentar(idTerbuka) as shape Komentar[] else empty()
+  mutation terkirim as shape Balasan refreshes saya then setelahKirim
+
+  derive saring = umpan.laporan.filter(l => pulau == "" or l.pulau == pulau)
+  derive tampil = urutan == "komentar" ? sortBy(saring, l => l.komentar, "desc") : urutan == "suka" ? sortBy(saring, l => l.suka, "desc") : saring
+  derive idSorotan = match first(tampil.filter(l => l.sampul != "")) { case some(l) => l.id, case none => "" }
+  derive kisi = tampil.filter(l => l.id != idSorotan).slice(0, 12)
+  derive hasilCari = kueri.trim() == "" ? umpan.laporan.slice(0, 30) : umpan.laporan.filter(l => cocok(l, kueri))
+  derive bilahTampil = top(nav).name != "lapor" and top(nav).name != "terkirim"
+  derive ditinjau = saya.filter(s => s.status == "menunggu").length
+
+  action back
+    nav = back(nav)
+  action ikuti(url: string)
+    nav = go(nav, url)
+  action pilihTab(nama: string)
+    nav = select(nav, nama)
+  action bukaLapor
+    galat = ""
+    nav = push(nav, "/lapor")
+  // Terkirim menggantikan Lapor di tumpukan tab yang membukanya: tutup dulu, lalu pindah tab.
+  action keBeranda
+    nav = select(back(nav), "beranda")
+  action keProfil
+    nav = select(back(nav), "profil")
+  action pilihPulau(p: string)
+    pulau = p
+  action urutkan(u: string)
+    urutan = u
+  action cari(v: string)
+    kueri = v
+  action muatUlang
+    refresh umpan
+  action muatUlangHotspot
+    refresh hotspot
+  action ubahJudul(v: string)
+    judul = v
+  action ubahDeskripsi(v: string)
+    deskripsi = v
+  action ubahNama(v: string)
+    nama = v
+  action ubahAnonim(v: bool)
+    anonim = v
+  action liveBelum
+    showModal("live-belum")
+  action kirim
+    if judul.trim() == ""
+      galat = "Isi judul singkat dulu."
+    else if deskripsi.trim() == ""
+      galat = "Ceritakan kondisinya sedikit."
+    else if not pending(terkirim)
+      galat = ""
+      send terkirim = kirimLaporan(judul.trim(), deskripsi.trim(), anonim ? "" : nama.trim(), anonim, waktu.epochAtZero + performanceNow(), waktu.utcOffset)
+  action setelahKirim
+    let balas = match terkirim { case some(b) => b, case none => Balasan(ok=false, galat="Tidak ada balasan dari inti Rust.") }
+    if balas.ok
+      judul = ""
+      deskripsi = ""
+      nama = ""
+      anonim = false
+      galat = ""
+      nav = replace(nav, "/terkirim")
+    else
+      galat = balas.galat
+
+  view
+    main navigationKey=`${top(nav).id}` navigationBack="back" navigate=ikuti testId="app"
+      width="100%" height="100%" display="flex" flex-direction="column" position="relative"
+      font-family="Poppins" background-color="latar.halaman" color="teks.utama" accent-color="aksen.isi"
+      column flex=1 min-height=0 position="relative"
+        for t in nav.tabs key=t.name
+          column role="tabpanel" id=`panel-${t.name}` position="absolute" inset=0
+            for e in t.stack key=e.id
+              column navigationKey=`${e.id}` navigationScroll=`isi-${e.id}` position="absolute" inset=0
+                display="flex" flex-direction="column" background-color="latar.halaman"
+                if e.name == "beranda"
+                  scroll id=`isi-${e.id}` flex=1 min-height=0
+                    column padding-top=6 padding-bottom=120
+                      Beranda(umpan=umpan, tampil=tampil, kisi=kisi, idSorotan=idSorotan, pulau=pulau, urutan=urutan,
+                        memuat=pending(umpan), gagal=failed(umpan), pilihPulau=pilihPulau, urutkan=urutkan, muatUlang=muatUlang)
+                else if e.name == "peta"
+                  scroll id=`isi-${e.id}` flex=1 min-height=0
+                    HalamanHotspot(h=hotspot, memuat=pending(hotspot), gagal=failed(hotspot), muatUlang=muatUlangHotspot)
+                else if e.name == "siaran"
+                  scroll id=`isi-${e.id}` flex=1 min-height=0
+                    HalamanSiaran(mulai=liveBelum)
+                else if e.name == "profil"
+                  scroll id=`isi-${e.id}` flex=1 min-height=0
+                    HalamanProfil(saya=saya, ditinjau=ditinjau, buatLaporan=bukaLapor)
+                else if e.name == "laporan"
+                  scroll id=`isi-${e.id}` flex=1 min-height=0
+                    for lap in umpan.laporan.filter(x => x.id == e.params.id) key=lap.id
+                      DetailLaporan(lap=lap, komentar=komentar, memuatKomentar=pending(komentar),
+                        serupa=umpan.laporan.filter(x => x.id != lap.id and x.tempat == lap.tempat).slice(0, 4), kembali=back)
+                    if umpan.laporan.filter(x => x.id == e.params.id).length == 0
+                      Kosong(ikon="symbol:icon.luring", pesan="Laporan ini belum tersedia. Coba lagi beberapa menit lagi.")
+                else if e.name == "cari"
+                  HalamanCari(kueri=kueri, hasil=hasilCari, cari=cari, kembali=back, idIsi=`isi-${e.id}`)
+                else if e.name == "lapor"
+                  FormLapor(judul=judul, deskripsi=deskripsi, nama=nama, anonim=anonim, galat=galat, mengirim=pending(terkirim),
+                    ubahJudul=ubahJudul, ubahDeskripsi=ubahDeskripsi, ubahNama=ubahNama, ubahAnonim=ubahAnonim,
+                    kirim=kirim, kembali=back, idIsi=`isi-${e.id}`)
+                else if e.name == "terkirim"
+                  scroll id=`isi-${e.id}` flex=1 min-height=0
+                    HalamanTerkirim(keBeranda=keBeranda, keProfil=keProfil)
+      // Bilah bawah mengambang (BilahBawah): empat tab ikon dan pil LAPOR di tengah.
+      row role="tablist" appearance="none" testId="tabs" aria-label="Navigasi utama"
+        position="absolute" left=16 right=16 bottom="calc(env(safe-area-inset-bottom) + 12px)" height=64
+        border-radius=32 padding="0 8px" display=(bilahTampil ? "flex" : "none") align-items="center"
+        justify-content="space-between" background-color="bilah.isi" box-shadow="0 10px 30px bayangan.bilah"
+        Tab(nama="beranda", label="Beranda", ikon="symbol:home", aktif=(nav.tab == "beranda"), pilih=pilihTab("beranda"))
+        Tab(nama="peta", label="Peta", ikon="symbol:icon.peta", aktif=(nav.tab == "peta"), pilih=pilihTab("peta"))
+        button press=bukaLapor testId="tombol-lapor" aria-label="Lapor"
+          height=48 padding="0 18px" border-radius=24 display="flex" align-items="center" gap=8
+          background-color="aksen.isi" color="aksen.di" font-size=19
+          image "symbol:camera"
+          text "LAPOR" font-size=15 font-weight=700 letter-spacing=0.4
+        Tab(nama="siaran", label="Live", ikon="symbol:icon.siaran", aktif=(nav.tab == "siaran"), pilih=pilihTab("siaran"))
+        Tab(nama="profil", label="Profil", ikon="symbol:person", aktif=(nav.tab == "profil"), pilih=pilihTab("profil"))
+      dialog id="live-belum" role="alertdialog" aria-label="Siaran langsung belum tersedia"
+        text "Siaran langsung memakai LiveKit (WebRTC), yang belum didukung Exact di Android. Daftar siaran publik tetap tampil di sini begitu tersedia."
+        button commandfor="live-belum" command="close" testId="live-belum-ok"
+          text "Mengerti"
+
+component Tab
+  props
+    nama: string
+    label: string
+    ikon: string
+    aktif: bool
+    pilih: action
+  view
+    button role="tab" aria-controls=`panel-${nama}` aria-selected=aktif aria-label=label press=pilih testId=`tab-${nama}`
+      width=48 height=48 border-radius=24 display="flex" align-items="center" justify-content="center" font-size=21
+      background-color=(aktif ? "bilah.ikon" : "transparent") color=(aktif ? "bilah.isi" : "bilah.ikon")
+      image ikon
+
+// Label kecil huruf kapital (gaya "mono" Laporin: Poppins 600, 11, renggang).
+component Alis
+  props
+    teks: string
+    aksen: bool
+  view
+    text teks.toUpperCase() font-size=11 font-weight=600 letter-spacing=0.9 color=(aksen ? "aksen.teks" : "teks.redup")
+
+component Pil
+  props
+    label: string
+  view
+    row align-items="center" gap=6 padding="6px 10px" border-radius=10 background-color="media.tinta"
+      box width=7 height=7 border-radius=4 background-color="aksen.isi"
+      text label.toUpperCase() font-size=11 font-weight=600 letter-spacing=0.7 color="media.teks" line-clamp=1
+
+component Chip
+  props
+    label: string
+    aktif: bool
+    pilih: action
+    uji: string
+  view
+    button press=pilih testId=uji height=36 padding="0 14px" border-radius=18 display="flex" align-items="center"
+      flex-shrink=0 border=(aktif ? "1px solid chip.aktif" : "1px solid garis.tipis")
+      background-color=(aktif ? "chip.aktif" : "transparent") color=(aktif ? "chip.di-aktif" : "teks.utama")
+      text label.toUpperCase() font-size=11 font-weight=600 letter-spacing=0.7
+
+component Kosong
+  props
+    ikon: string
+    pesan: string
+  slot
+  view
+    column align-items="center" gap=12 padding="28px 22px" margin="12px 16px" border-radius=28
+      background-color="latar.permukaan"
+      box width=50 height=50 border-radius=25 display="flex" align-items="center" justify-content="center"
+        background-color="latar.redup" font-size=22
+        image ikon
+      text pesan font-size=13.5 line-height=1.48 color="teks.redup" text-align="center" testId="pesan-kosong"
+      children
+
+component Beranda
+  props
+    umpan: Umpan
+    tampil: Laporan[]
+    kisi: Laporan[]
+    idSorotan: string
+    pulau: string
+    urutan: string
+    memuat: bool
+    gagal: bool
+    pilihPulau: action
+    urutkan: action
+    muatUlang: action
+  view
+    column
+      // Kepala: titik status + LAPORIN, lalu tombol cari.
+      row padding="0 16px" align-items="center" justify-content="space-between" gap=12 min-height=44
+        row align-items="center" gap=6
+          box width=8 height=8 border-radius=4 background-color="aksen.isi"
+          text "LAPORIN" font-size=11 font-weight=600 letter-spacing=0.9
+        link href=path("cari") testId="buka-cari" aria-label="Cari laporan"
+          box width=34 height=34 border-radius=17 border="1px solid garis.tipis" display="flex" align-items="center"
+            justify-content="center" font-size=17
+            image "symbol:search"
+      if gagal and umpan.laporan.length > 0
+        text "Gagal memperbarui. Periksa koneksi lalu coba lagi." font-size=12.5 font-weight=500 color="status.bahaya"
+          padding="6px 20px 0"
+      if umpan.pulau.length >= 2
+        scroll overflow-x="auto" overflow-y="hidden" padding-top=14 testId="chip-pulau"
+          row gap=6 padding="0 16px"
+            Chip(label="Semua", aktif=(pulau == ""), pilih=pilihPulau(""), uji="pulau-semua")
+            for p in umpan.pulau key=p.nama
+              Chip(label=p.nama, aktif=(pulau == p.nama), pilih=pilihPulau(p.nama), uji=`pulau-${p.nama}`)
+      // Kartu sorotan: laporan pertama yang punya foto.
+      if idSorotan != ""
+        for l in tampil.filter(x => x.id == idSorotan) key=l.id
+          KartuSorotan(lap=l)
+      else
+        column margin="12px 16px 0" min-height=260 border-radius=28 background-color="latar.permukaan"
+          align-items="center" justify-content="center" gap=12 padding="0 28px"
+          if memuat
+            progress aria-label="Memuat laporan"
+          else if gagal
+            image "symbol:icon.luring" font-size=28
+            text "Periksa koneksi lalu coba lagi." font-size=13.5 line-height=1.48 color="teks.redup" text-align="center"
+            button press=muatUlang testId="coba-lagi" height=44 padding="0 18px" border-radius=22
+              border="1px solid garis.tegas" display="flex" align-items="center" gap=8
+              image "symbol:refresh"
+              text "Coba lagi" font-size=15 font-weight=700
+          else
+            image "symbol:search" font-size=28
+            text "Laporan yang sudah diverifikasi petugas tampil di sini." font-size=13.5 line-height=1.48
+              color="teks.redup" text-align="center"
+      // Kepala kisi: urutan + LIHAT SEMUA.
+      row padding="14px 20px 8px 16px" align-items="center" justify-content="space-between"
+        button popovertarget="menu-urut" testId="urut" height=30 padding="0 9px 0 12px" border-radius=18
+          border="1px solid garis.tipis" display="flex" align-items="center" gap=4
+          text labelUrut(urutan).toUpperCase() font-size=11 font-weight=600 letter-spacing=1.1
+          image "symbol:icon.bawah" font-size=14
+        link href=path("cari") testId="lihat-semua"
+          text "LIHAT SEMUA →" font-size=11 font-weight=600 letter-spacing=1.1
+      column id="menu-urut" popover="auto" role="menu" aria-label="Urutkan laporan"
+        button press=urutkan("terbaru") popovertarget="menu-urut" popovertargetaction="hide" testId="urut-terbaru"
+          text "Terbaru"
+        button press=urutkan("komentar") popovertarget="menu-urut" popovertargetaction="hide" testId="urut-komentar"
+          text "Paling dikomentari"
+        button press=urutkan("suka") popovertarget="menu-urut" popovertargetaction="hide" testId="urut-suka"
+          text "Paling disukai"
+      // Kisi berundak dua kolom (KisiUndak).
+      row padding="0 16px" gap=10 align-items="flex-start"
+        column flex=1 min-width=0 gap=16
+          for l, i in kisi key=l.id
+            if i % 2 == 0
+              KartuKecil(lap=l)
+        column flex=1 min-width=0 gap=16
+          for l, i in kisi key=l.id
+            if i % 2 == 1
+              KartuKecil(lap=l)
+
+component KartuSorotan
+  props
+    lap: Laporan
+  view
+    link href=path("laporan", lap.id) testId="sorotan" margin="12px 16px 0" display="block"
+      column position="relative" height="clamp(380px, 115vw, 560px)" border-radius=28 overflow="hidden"
+        background-color="media.kartu"
+        image lap.sampul alt=lap.judul position="absolute" inset=0 width="100%" height="100%" object-fit="cover"
+        row position="absolute" top=16 left=16 right=16 justify-content="space-between" align-items="center"
+          Pil(label=lap.tempat)
+          if lap.adaVideo
+            row align-items="center" gap=4 padding="6px 10px" border-radius=10 background-color="media.tinta"
+              color="media.teks" font-size=12
+              image "symbol:play-fill"
+              text "VIDEO" font-size=11 font-weight=600 letter-spacing=0.7
+        column position="absolute" left=0 right=0 bottom=0 min-height=124 padding="14px 18px 16px" gap=8
+          background-color="media.pita"
+          text lap.judul font-size=20 line-height=1.3 font-weight=700 color="media.teks" line-clamp=3 testId="judul-sorotan"
+          row align-items="center" gap=14 color="media.teks"
+            text lap.kredit font-size=13 font-weight=600 flex=1 min-width=0 line-clamp=1
+            if lap.suka > 0
+              row align-items="center" gap=5 font-size=17
+                image "symbol:heart"
+                text hitung(lap.suka) font-size=13 font-weight=600
+            if lap.komentar > 0
+              row align-items="center" gap=5 font-size=16
+                image "symbol:messages"
+                text hitung(lap.komentar) font-size=13 font-weight=600
+
+component KartuKecil
+  props
+    lap: Laporan
+  view
+    link href=path("laporan", lap.id) testId=`kartu-${lap.id}` display="block"
+      column gap=8
+        box position="relative" aspect-ratio=(lap.vertikal ? "3 / 4" : "1 / 1") border-radius=20 overflow="hidden"
+          background-color="latar.redup" min-height=0
+          if lap.sampulKecil != ""
+            image lap.sampulKecil alt=lap.judul position="absolute" inset=0 width="100%" height="100%" object-fit="cover"
+          else
+            column position="absolute" inset=0 align-items="center" justify-content="center" font-size=26 color="teks.redup"
+              image "symbol:icon.api"
+          if lap.adaVideo
+            box position="absolute" top=8 right=8 width=24 height=24 border-radius=12 display="flex"
+              align-items="center" justify-content="center" background-color="media.kaca" color="media.teks" font-size=11
+              image "symbol:play-fill"
+        text lap.judul font-size=14 line-height=1.25 font-weight=600 line-clamp=3
+        text `${lap.tempat.toUpperCase()} · ${lap.tanggalPendek}` font-size=9 font-weight=600 letter-spacing=0.54
+          color="teks.redup" line-clamp=1
+
+component DetailLaporan
+  props
+    lap: Laporan
+    komentar: Komentar[]
+    memuatKomentar: bool
+    serupa: Laporan[]
+    kembali: action
+  view
+    column padding-bottom=120
+      // Area media: foto sampul, tombol kembali dan pil tempat di atasnya.
+      column position="relative" height="clamp(240px, 75vw, 520px)" background-color="media.tinta"
+        if lap.sampul != ""
+          image lap.sampul alt=lap.judul position="absolute" inset=0 width="100%" height="100%" object-fit="cover"
+        row position="absolute" top=8 left=8 right=12 align-items="center" justify-content="space-between"
+          button press=kembali aria-label="Kembali" testId="kembali" width=44 height=44 border-radius=22
+            display="flex" align-items="center" justify-content="center" background-color="media.kaca"
+            color="media.teks" font-size=19
+            image "symbol:back"
+          Pil(label=lap.tempat)
+        if lap.jumlahMedia > 1
+          text `${lap.jumlahMedia} MEDIA` position="absolute" right=12 bottom=12 padding="4px 8px" border-radius=7
+            background-color="media.kaca" color="media.teks" font-size=10 font-weight=600 letter-spacing=0.5
+      column padding="18px 20px 0" gap=14
+        row align-items="center" gap=10
+          box width=38 height=38 border-radius=19 display="flex" align-items="center" justify-content="center"
+            background-color="chip.aktif" color="chip.di-aktif"
+            text lap.inisial font-size=13 font-weight=700
+          column flex=1 min-width=0 gap=2
+            row align-items="center" gap=6
+              text lap.kredit font-size=15 font-weight=700 line-clamp=1
+              text "TERVERIFIKASI" font-size=8.5 font-weight=600 letter-spacing=0.5 padding="2px 5px" border-radius=4
+                border="1px solid garis.tegas"
+            text lap.tanggal font-size=12 color="teks.redup"
+        text lap.judul role="heading" aria-level=1 font-size=24 line-height=1.21 font-weight=700 letter-spacing=-0.4
+          testId="judul-detail"
+        if lap.deskripsi != ""
+          text lap.deskripsi font-size=14 line-height=1.5 white-space="pre-line" color="teks.utama" opacity=0.82
+        // Pita data: LOKASI · TANGGAL · SUMBER.
+        row border-top="1px solid garis.tipis" border-bottom="1px solid garis.tipis"
+          column flex=1 min-width=0 gap=4 padding="10px 0"
+            row align-items="center" gap=4
+              text "LOKASI" font-size=9 font-weight=500 letter-spacing=0.7 color="teks.redup"
+              image "symbol:icon.titik" font-size=10 color="aksen.isi"
+            text lap.lintang font-size=11 line-height=1.36 font-weight=600
+            text lap.bujur font-size=11 line-height=1.36 font-weight=600
+          column flex=1 min-width=0 gap=4 padding="10px 0 10px 12px" border-left="1px solid garis.tipis"
+            text "TANGGAL" font-size=9 font-weight=500 letter-spacing=0.7 color="teks.redup"
+            text lap.tanggalPendek font-size=11 line-height=1.36 font-weight=600
+          column flex=1 min-width=0 gap=4 padding="10px 0 10px 12px" border-left="1px solid garis.tipis"
+            text "SUMBER" font-size=9 font-weight=500 letter-spacing=0.7 color="teks.redup"
+            text lap.kredit.toUpperCase() font-size=11 line-height=1.36 font-weight=600 line-clamp=2
+        row gap=8 align-items="center"
+          row height=44 padding="0 16px" border-radius=22 border="1px solid garis.tipis" align-items="center" gap=6
+            font-size=18
+            image "symbol:heart"
+            text hitung(lap.suka) font-size=13 font-weight=700 testId="jumlah-suka"
+          row height=44 padding="0 16px" border-radius=22 border="1px solid garis.tipis" align-items="center" gap=6
+            font-size=17
+            image "symbol:messages"
+            text hitung(lap.komentar) font-size=13 font-weight=700
+        if lap.lokasi != ""
+          text lap.lokasi font-size=12 line-height=1.5 color="teks.redup"
+      // Komentar dari situs (GET /api/laporan/{id}/komentar).
+      column padding="22px 20px 0" gap=12
+        row align-items="baseline" gap=8
+          text "Komentar" font-size=21 font-weight=700 role="heading" aria-level=2
+          text komentar.length.toString() font-size=21 font-weight=700 color="aksen.teks"
+        if memuatKomentar and komentar.length == 0
+          progress aria-label="Memuat komentar"
+        else if komentar.length == 0
+          text "Belum ada komentar." font-size=13.5 color="teks.redup" testId="tanpa-komentar"
+        for k in komentar key=k.id
+          row gap=10 align-items="flex-start" padding-bottom=12 border-bottom="1px solid garis.tipis"
+            box width=34 height=34 border-radius=17 display="flex" align-items="center" justify-content="center"
+              background-color="latar.redup" flex-shrink=0
+              text k.inisial font-size=12 font-weight=700
+            column flex=1 min-width=0 gap=3
+              row align-items="baseline" gap=8
+                text k.nama font-size=13 font-weight=700 line-clamp=1
+                text k.waktu.toUpperCase() font-size=10 font-weight=500 letter-spacing=0.4 color="teks.redup"
+              text k.isi font-size=14 line-height=1.43
+              if k.balasan > 0
+                text `${k.balasan} balasan` font-size=12 font-weight=600 color="teks.redup"
+      if serupa.length > 0
+        column padding="24px 16px 0" gap=14
+          row padding-bottom=12 border-bottom="1px solid garis.tipis"
+            text "LAPORAN SERUPA" font-size=11 font-weight=600 letter-spacing=0.7 padding="9px 14px" border-radius=18
+              background-color="chip.aktif" color="chip.di-aktif"
+          row gap=10 align-items="flex-start"
+            column flex=1 min-width=0 gap=16
+              for l, i in serupa key=l.id
+                if i % 2 == 0
+                  KartuKecil(lap=l)
+            column flex=1 min-width=0 gap=16
+              for l, i in serupa key=l.id
+                if i % 2 == 1
+                  KartuKecil(lap=l)
+
+component HalamanHotspot
+  props
+    h: Hotspot
+    memuat: bool
+    gagal: bool
+    muatUlang: action
+  view
+    column padding="14px 0 120px" gap=0
+      column padding="0 20px" gap=10
+        Alis(teks="Peta hotspot · data satelit", aksen=false)
+        column
+          text (h.total > 0 ? `${ribuan(h.total)} titik panas` : "Titik panas") font-size=31 line-height=1.23
+            font-weight=700 letter-spacing=-0.4 color="aksen.teks" testId="judul-hotspot"
+          text "24 jam terakhir." font-size=31 line-height=1.23 font-weight=700 letter-spacing=-0.4
+        text (h.diperbarui != "" ? `Diperbarui ${h.diperbarui} · ${h.hari}` : "Mengambil data dari geoplatform…") font-size=14
+          line-height=1.5 color="teks.redup"
+      if gagal and h.total == 0
+        Kosong(ikon="symbol:icon.luring", pesan="Data hotspot gagal dimuat. Periksa koneksi lalu coba lagi.")
+          button press=muatUlang testId="hotspot-coba-lagi" height=44 padding="0 18px" border-radius=22
+            border="1px solid garis.tegas" display="flex" align-items="center" gap=8
+            image "symbol:refresh"
+            text "Coba lagi" font-size=15 font-weight=700
+      else if memuat and h.total == 0
+        column padding=40 align-items="center"
+          progress aria-label="Memuat hotspot"
+      else
+        // Tingkat kepercayaan (SiPongi): Tinggi · Sedang · Rendah.
+        row margin="20px 16px 0" gap=8
+          KotakAngka(label="Tinggi", nilai=h.tinggi, warna="kepercayaan.tinggi")
+          KotakAngka(label="Sedang", nilai=h.sedang, warna="kepercayaan.sedang")
+          KotakAngka(label="Rendah", nilai=h.rendah, warna="kepercayaan.rendah")
+        text `${ribuan(h.malam)} titik terdeteksi malam hari.` font-size=12 color="teks.redup" padding="10px 20px 0"
+        // Per satelit.
+        column margin="24px 16px 0" padding="18px 18px 6px" border-radius=20 background-color="latar.permukaan" gap=4
+          text "Per satelit" font-size=21 line-height=1.24 font-weight=700 role="heading" aria-level=2 padding-bottom=8
+          for s in h.satelit key=s.nama
+            row align-items="center" gap=12 padding="10px 0" border-top="1px solid garis.tipis"
+              column flex=1 min-width=0 gap=2
+                text s.nama font-size=14 font-weight=700
+                text s.sensor.toUpperCase() font-size=10 font-weight=500 letter-spacing=0.5 color="teks.redup"
+              text ribuan(s.jumlah) font-size=21 font-weight=700 font-variant-numeric="tabular-nums"
+        // Peringkat provinsi dan kabupaten.
+        Peringkat(judul="Provinsi teratas", baris=h.provinsi, uji="provinsi")
+        Peringkat(judul="Kabupaten teratas", baris=h.kabupaten, uji="kabupaten")
+        row margin="24px 16px 0" padding=14 gap=10 border-radius=16 background-color="status.peringatan-lembut"
+          align-items="flex-start" color="status.peringatan"
+          image "symbol:icon.awas" font-size=18
+          text "Peta interaktif (MapLibre) belum tersedia di Exact. Angka di halaman ini diolah inti Rust di HP dari payload /api/hotspot."
+            font-size=12 line-height=1.5 flex=1 min-width=0
+
+component KotakAngka
+  props
+    label: string
+    nilai: number
+    warna: string
+  view
+    column flex=1 min-width=0 gap=6 padding="14px 12px" border-radius=20 background-color="latar.permukaan"
+      row align-items="center" gap=6
+        box width=8 height=8 border-radius=4 background-color=warna
+        text label.toUpperCase() font-size=10.5 font-weight=600 letter-spacing=0.6 color="teks.redup"
+      text ribuan(nilai) font-size=25 line-height=1.2 font-weight=700 font-variant-numeric="tabular-nums"
+
+component Peringkat
+  props
+    judul: string
+    baris: Peringkat[]
+    uji: string
+  view
+    if baris.length > 0
+      column margin="16px 16px 0" padding="18px 18px 12px" border-radius=20 background-color="latar.permukaan" gap=12
+        text judul font-size=21 line-height=1.24 font-weight=700 role="heading" aria-level=2
+        for b, i in baris key=b.nama
+          column gap=6 testId=`${uji}-${i}`
+            row align-items="baseline" gap=8
+              text `${i + 1}` font-size=11 font-weight=600 color="teks.redup" width=18
+              text b.nama font-size=14 font-weight=600 flex=1 min-width=0 line-clamp=1
+              text ribuan(b.jumlah) font-size=14 font-weight=700 font-variant-numeric="tabular-nums"
+            box height=6 border-radius=3 background-color="aksen.lembut" margin-left=26
+              box height=6 border-radius=3 background-color="aksen.isi" width=`${max(b.persen, 2)}%`
+
+component HalamanSiaran
+  props
+    mulai: action
+  view
+    column padding="14px 0 120px"
+      column padding="0 20px"
+        text "Siaran" font-size=36 line-height=1.22 font-weight=700 letter-spacing=-0.4 color="aksen.teks"
+        text "langsung" font-size=36 line-height=1.22 font-weight=700 letter-spacing=-0.4
+        text "BELUM ADA SIARAN PUBLIK" font-size=11 font-weight=500 letter-spacing=0.4 color="teks.redup" padding-top=8
+      column margin="18px 16px 28px" padding=22 border-radius=28 background-color="aksen.isi" color="aksen.di"
+        align-items="flex-start"
+        row align-items="center" gap=6
+          box width=7 height=7 border-radius=4 background-color="aksen.di"
+          text "SIARAN LAPANGAN" font-size=11 font-weight=600 letter-spacing=0.9
+        text "Siarkan dari lokasi." font-size=25 line-height=1.2 font-weight=700 letter-spacing=-0.4 margin-top=10
+        text "Tunjukkan kondisi terkini ke petugas secara langsung." font-size=14 line-height=1.43 font-weight=500
+          margin-top=8 max-width=300
+        button press=mulai testId="mulai-live" margin-top=18 height=48 padding="0 22px" border-radius=24
+          background-color="chip.aktif" color="chip.di-aktif" display="flex" align-items="center" gap=8 font-size=17
+          image "symbol:icon.siaran"
+          text "Mulai live" font-size=15 font-weight=700
+      Kosong(ikon="symbol:icon.siaran", pesan="Siaran yang dibuka untuk publik tampil di sini.")
+
+component HalamanProfil
+  props
+    saya: LaporanSaya[]
+    ditinjau: number
+    buatLaporan: action
+  view
+    column padding-bottom=120
+      row min-height=64 padding="0 16px 0 20px" align-items="center" justify-content="space-between"
+        row align-items="baseline"
+          text "LAPORIN" font-size=21 line-height=1.24 font-weight=700
+          text "." font-size=21 line-height=1.24 font-weight=700 color="aksen.isi"
+      column align-items="center" padding="5px 28px 20px"
+        box width=96 height=96 border-radius=48 display="flex" align-items="center" justify-content="center"
+          background-color="chip.aktif" color="chip.di-aktif"
+          text "PT" font-size=32 font-weight=700
+        text "Pelapor tamu" font-size=24 line-height=1.21 font-weight=700 letter-spacing=-0.4 margin-top=14
+        text "Laporan disimpan di HP ini oleh inti Rust" font-size=13 color="teks.redup" margin-top=8 text-align="center"
+      row margin="0 20px" border-top="1px solid garis.tipis" border-bottom="1px solid garis.tipis"
+        Statistik(label="Laporan", nilai=saya.length, garis=false)
+        Statistik(label="Ditinjau", nilai=ditinjau, garis=true)
+        Statistik(label="Tayang", nilai=saya.filter(s => s.status == "tayang").length, garis=true)
+      row padding="14px 16px 12px" margin-bottom=12 border-bottom="1px solid garis.tipis"
+        text "LAPORAN SAYA" font-size=11 font-weight=600 letter-spacing=0.7 padding="10px 14px" border-radius=18
+          background-color="chip.aktif" color="chip.di-aktif"
+      if saya.length == 0
+        column align-items="center" gap=10 padding="40px 28px"
+          box width=56 height=56 border-radius=28 display="flex" align-items="center" justify-content="center"
+            background-color="latar.redup" font-size=24
+            image "symbol:camera"
+          text "Laporanmu tampil di sini beserta status verifikasinya." font-size=13.5 line-height=1.48
+            color="teks.redup" text-align="center" testId="profil-kosong"
+          button press=buatLaporan testId="buat-laporan" margin-top=6 height=48 padding="0 22px" border-radius=24
+            background-color="aksen.isi" color="aksen.di" display="flex" align-items="center" gap=8 font-size=18
+            image "symbol:add"
+            text "BUAT LAPORAN" font-size=15 font-weight=700 letter-spacing=0.4
+      for s in saya key=s.id
+        column margin="0 16px 10px" padding=16 gap=8 border-radius=20 background-color="latar.permukaan" testId=`saya-${s.id}`
+          row align-items="center" gap=6
+            box width=7 height=7 border-radius=4
+              background-color=(s.status == "tayang" ? "status.sukses" : s.status == "ditolak" ? "status.bahaya" : "status.peringatan")
+            text statusLabel(s.status) font-size=10 font-weight=600 letter-spacing=0.5 color="teks.redup" flex=1
+            text s.dibuat font-size=10 font-weight=500 letter-spacing=0.4 color="teks.redup"
+          text s.judul font-size=16 line-height=1.25 font-weight=700
+          text s.deskripsi font-size=13.5 line-height=1.48 color="teks.redup" line-clamp=2
+          text (s.pengirim == "" ? "Dikirim sebagai anonim" : `Dikirim sebagai ${s.pengirim}`) font-size=12
+            font-weight=500 color="teks.redup"
+
+component Statistik
+  props
+    label: string
+    nilai: number
+    garis: bool
+  view
+    column flex=1 min-width=0 gap=2 padding=(garis ? "10px 0 10px 12px" : "10px 0")
+      border-left=(garis ? "1px solid garis.tipis" : "none")
+      text label.toUpperCase() font-size=9.5 font-weight=500 letter-spacing=0.8 color="teks.redup"
+      text nilai.toString() font-size=21 line-height=1.24 font-weight=700 font-variant-numeric="tabular-nums"
+
+component BilahAtas
+  props
+    judul: string
+    kembali: action
+  view
+    row min-height=64 padding="0 16px" align-items="center" gap=8 background-color="latar.halaman"
+      button press=kembali aria-label="Kembali" testId="kembali" width=34 height=34 border-radius=17
+        border="1px solid garis.tipis" display="flex" align-items="center" justify-content="center" font-size=17
+        image "symbol:back"
+      text judul role="heading" aria-level=1 flex=1 text-align="center" font-size=18 line-height=1.22 font-weight=700
+      box width=34 height=34
+
+component HalamanCari
+  props
+    kueri: string
+    hasil: Laporan[]
+    cari: action
+    kembali: action
+    idIsi: string
+  view
+    column flex=1 min-height=0
+      BilahAtas(judul="Pencarian", kembali=kembali)
+      row margin="0 16px 8px" height=48 padding="0 16px" border-radius=24 background-color="latar.permukaan" align-items="center"
+        gap=10 font-size=18 color="teks.redup"
+        image "symbol:search"
+        input type="search" value=kueri input=cari placeholder="Cari judul, desa, provinsi…" aria-label="Cari laporan"
+          testId="kolom-cari" flex=1 min-width=0 border="none" background-color="transparent" font-size=15 color="teks.utama"
+      scroll id=idIsi flex=1 min-height=0
+        column padding="8px 16px 120px" gap=10
+          if hasil.length == 0
+            Kosong(ikon="symbol:search", pesan="Tidak ada laporan yang cocok. Coba kata lain.")
+          for l in hasil key=l.id
+            link href=path("laporan", l.id) testId=`hasil-${l.id}`
+              row gap=12 align-items="center" padding=8 border-radius=20 background-color="latar.permukaan"
+                box width=72 height=72 border-radius=14 overflow="hidden" background-color="latar.redup" flex-shrink=0
+                  if l.sampulKecil != ""
+                    image l.sampulKecil alt=l.judul width="100%" height="100%" object-fit="cover"
+                column flex=1 min-width=0 gap=4
+                  text l.judul font-size=16 line-height=1.25 font-weight=700 line-clamp=2
+                  text `${l.tempat.toUpperCase()} · ${l.tanggalPendek}` font-size=10 font-weight=500 letter-spacing=0.5
+                    color="teks.redup" line-clamp=1
+
+component Isian
+  props
+    label: string
+    petunjuk: string
+  slot
+  view
+    column gap=4 padding="12px 16px" border-radius=16 background-color="latar.permukaan"
+      text label.toUpperCase() font-size=10.5 font-weight=600 letter-spacing=0.6 color="teks.redup"
+      children
+      if petunjuk != ""
+        text petunjuk font-size=12 color="teks.redup"
+
+component FormLapor
+  props
+    judul: string
+    deskripsi: string
+    nama: string
+    anonim: bool
+    galat: string
+    mengirim: bool
+    ubahJudul: action
+    ubahDeskripsi: action
+    ubahNama: action
+    ubahAnonim: action
+    kirim: action
+    kembali: action
+    idIsi: string
+  view
+    column flex=1 min-height=0
+      BilahAtas(judul="Lapor", kembali=kembali)
+      scroll id=idIsi flex=1 min-height=0
+        column padding="12px 20px 24px" gap=12
+          Alis(teks="Detail laporan", aksen=false)
+          column
+            text "Ceritakan" font-size=31 line-height=1.23 font-weight=700 letter-spacing=-0.4
+            text "situasinya." font-size=31 line-height=1.23 font-weight=700 letter-spacing=-0.4 color="aksen.teks"
+          text "Informasi yang akurat mempercepat verifikasi." font-size=14 line-height=1.5 color="teks.redup"
+          row gap=10 padding=14 border-radius=16 background-color="aksen.lembut" align-items="flex-start"
+            color="aksen.teks" font-size=17
+            image "symbol:info"
+            text "Mode demo: laporan disimpan inti Rust di HP ini (app:/data) dan tampil di Profil, belum dikirim ke server."
+              font-size=12.5 line-height=1.44 flex=1 min-width=0
+          Isian(label="Judul singkat", petunjuk="")
+            input value=judul input=ubahJudul placeholder="Mis. “Asap tebal di tepi jalan Trans-Kalimantan”"
+              aria-label="Judul singkat" maxlength=255 testId="judul" border="none" background-color="transparent"
+              font-size=15 font-weight=500 color="teks.utama"
+          Isian(label="Deskripsikan kondisi", petunjuk="Semakin detail, semakin membantu.")
+            textarea value=deskripsi input=ubahDeskripsi rows=5 maxlength=5000 aria-label="Deskripsikan kondisi"
+              placeholder="Contoh: Asap tebal dari arah timur sejak pukul 08.00, api terlihat di tepi kebun…"
+              testId="deskripsi" border="none" background-color="transparent" font-size=14.5 line-height=1.45
+              color="teks.utama"
+          row gap=10 padding=14 border-radius=16 background-color="status.peringatan-lembut" align-items="flex-start"
+            color="status.peringatan" font-size=18
+            image "symbol:icon.awas"
+            text "Utamakan keselamatanmu. Jangan mendekati api atau asap tebal untuk memotret." font-size=12
+              line-height=1.5 flex=1 min-width=0
+          row gap=12 padding="12px 16px" border-radius=16 border="1px solid garis.tipis" background-color="latar.permukaan"
+            align-items="center" font-size=18
+            image "symbol:icon.anonim"
+            column flex=1 min-width=0 gap=2
+              text "Kirim sebagai anonim" font-size=14 font-weight=700
+              text (anonim ? "Nama tidak ditampilkan" : "Nama boleh dikosongkan") font-size=12 color="teks.redup"
+            input type="checkbox" switch checked=anonim change=ubahAnonim aria-label="Kirim sebagai anonim" testId="anonim"
+          if not anonim
+            Isian(label="Nama (opsional)", petunjuk="")
+              input value=nama input=ubahNama placeholder="Nama pelapor" aria-label="Nama pelapor" maxlength=100
+                testId="nama" border="none" background-color="transparent" font-size=15 font-weight=500 color="teks.utama"
+          text "Dengan mengirim, kamu menyetujui Ketentuan Penggunaan Laporin." font-size=12 line-height=1.42
+            color="teks.redup" text-align="center"
+      column padding="12px 20px calc(env(safe-area-inset-bottom) + 14px)" gap=9 background-color="latar.halaman"
+        border-top="1px solid garis.tipis"
+        if galat != ""
+          row gap=8 padding=12 border-radius=16 border="1px solid status.bahaya" color="status.bahaya" font-size=17
+            align-items="center"
+            image "symbol:alert"
+            text galat font-size=13 line-height=1.38 font-weight=500 flex=1 min-width=0 testId="galat"
+        button press=kirim disabled=mengirim testId="kirim" height=56 border-radius=28 display="flex"
+          align-items="center" justify-content="center" background-color="aksen.isi" color="aksen.di"
+          text (mengirim ? "MENYIMPAN…" : "KIRIM LAPORAN") font-size=16 font-weight=700 letter-spacing=0.5
+
+component HalamanTerkirim
+  props
+    keBeranda: action
+    keProfil: action
+  view
+    column padding="40px 20px 40px" gap=16
+      text "MODE DEMO · TERSIMPAN DI HP" font-size=11 font-weight=600 letter-spacing=0.8 color="aksen.teks"
+      column
+        text "Terima" font-size=38 line-height=1.21 font-weight=700 letter-spacing=-0.4
+        text "kasih sudah" font-size=38 line-height=1.21 font-weight=700 letter-spacing=-0.4
+        text "melapor." font-size=38 line-height=1.21 font-weight=700 letter-spacing=-0.4 color="aksen.teks"
+      text "Laporanmu disimpan inti Rust di HP ini. Statusnya bisa dipantau dari Profil." font-size=15 line-height=1.47
+        max-width=340 testId="terima-kasih"
+      column border-top="1px solid garis.tipis"
+        Langkah(judul="Laporan diterima", status="BARU SAJA", selesai=true)
+        Langkah(judul="Verifikasi petugas", status="MENUNGGU", selesai=false)
+        Langkah(judul="Tayang di beranda", status="BILA DISETUJUI", selesai=false)
+      row gap=10 margin-top=8
+        button press=keProfil testId="pantau-status" flex=1 height=52 border-radius=26 border="1px solid garis.tegas"
+          display="flex" align-items="center" justify-content="center"
+          text "Pantau status" font-size=15 font-weight=700
+        button press=keBeranda testId="ke-beranda" flex=1 height=52 border-radius=26 background-color="chip.aktif"
+          color="chip.di-aktif" display="flex" align-items="center" justify-content="center"
+          text "Ke beranda" font-size=15 font-weight=700
+
+component Langkah
+  props
+    judul: string
+    status: string
+    selesai: bool
+  view
+    row min-height=54 align-items="center" gap=12 border-bottom="1px solid garis.tipis"
+      // Selesai: cincin aksen 6 px berpusat warna teks; menunggu: cincin tipis.
+      box width=20 height=20 border-radius=10 flex-shrink=0 display="flex" align-items="center" justify-content="center"
+        background-color=(selesai ? "aksen.isi" : "transparent") border=(selesai ? "none" : "2px solid garis.tegas")
+        if selesai
+          box width=8 height=8 border-radius=4 background-color="teks.utama"
+      text judul font-size=15 font-weight=700 flex=1
+      text status font-size=10.5 font-weight=600 letter-spacing=0.6 color=(selesai ? "aksen.teks" : "teks.redup")

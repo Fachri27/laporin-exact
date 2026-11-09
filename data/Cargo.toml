@@ -1,0 +1,22 @@
+# Inti Laporin: menjawab setiap sumber data di app.contract. Jaringan dan berkas dijalankan host
+# Exact (Answer::Later); crate ini hanya menyusun permintaan dan mengolah balasannya.
+[package]
+name = "laporin-exact-data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Inti Rust Laporin: umpan, komentar, olahan hotspot, laporan tersimpan"
+publish = false
+
+[lib]
+name = "laporin_data"
+crate-type = ["rlib"]
+
+[dependencies]
+exact-plan = { path = "../../exact/plan" }
+exact-runner = { path = "../../exact/runner" }
+exact-data = { path = "../../exact/data" }
+serde_json = "1.0"
+
+[build-dependencies]
+contract = { path = "../../exact/contract/cli" }

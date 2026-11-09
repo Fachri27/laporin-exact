@@ -1,0 +1,18 @@
+# Workspace Rust Laporin: data/ adalah inti (backend) yang menjawab setiap sumber di app.contract,
+# android/ adalah pustaka yang dimuat pembaca Canvas Exact (libexactcanvas.so).
+# Patch crates.io harus sama dengan milik exact2 (bun exact.mjs update menulis ulang path-nya).
+[workspace]
+members = ["data", "android"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+[patch.crates-io]
+accesskit_windows = { path = "../exact/vendor/accesskit-windows" }
+taffy = { path = "../exact/vendor/taffy" }
+parley = { path = "../exact/vendor/parley" }
+fontique = { path = "../exact/vendor/fontique" }
+wgpu-hal = { path = "../exact/vendor/wgpu-hal" }

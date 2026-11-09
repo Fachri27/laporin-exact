@@ -1,0 +1,26 @@
+# Laporin di host Canvas Android: satu pustaka berisi runner, kernel, inti data, plan yang
+# dipanggang (build.rs, tidak di-commit) dan JNI host, dimuat pembaca (exact/host/android) sebagai
+# libexactcanvas.so. Di luar Android pustakanya kosong.
+[package]
+name = "laporin-exact-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Laporin di host Canvas Android: pustaka yang dimuat pembaca"
+publish = false
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib"]
+test = false
+bench = false
+
+[target.'cfg(target_os = "android")'.dependencies]
+laporin-exact-data = { path = "../data" }
+exact-data-host = { path = "../../exact/data/host" }
+exact-linux = { path = "../../exact/host/linux" }
+
+[build-dependencies]
+laporin-exact-data = { path = "../data" }
+contract = { path = "../../exact/contract/cli" }
+exact-bake = { path = "../../exact/bake" }

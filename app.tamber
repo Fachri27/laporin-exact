@@ -1,0 +1,49 @@
+tamber laporin
+
+// Bahasa rupa SAKSI dari laporin-apps (src/constants/theme.ts): tinta #0C0E0D, tulang #EDE8DF,
+// sinyal #FF4A1C. Mode gelap adalah rancangan aslinya; mode terang kebalikannya. Teks di atas
+// sinyal selalu tinta, tidak pernah putih.
+theme
+  latar.halaman = light-dark(#EDE8DF, #0C0E0D)
+  latar.permukaan = light-dark(#E2DDD4, #1A1B1A)
+  latar.redup = light-dark(#D9D4CC, #232422)
+  garis.tipis = light-dark(#CAC5BC, #30312F)
+  garis.tegas = light-dark(#A9A69F, #4F4F4C)
+  teks.utama = light-dark(#0C0E0D, #EDE8DF)
+  teks.redup = light-dark(#5E5E5A, #979590)
+  aksen.isi = #FF4A1C  scheme=fixed
+  aksen.teks = light-dark(#B02C08, #FF4A1C)
+  aksen.lembut = light-dark(rgba(255, 74, 28, 0.12), rgba(255, 74, 28, 0.16))
+  aksen.di = #0C0E0D  scheme=fixed
+  bilah.isi = light-dark(#0C0E0D, #EDE8DF)
+  bilah.ikon = light-dark(#EDE8DF, #0C0E0D)
+  chip.aktif = light-dark(#0C0E0D, #EDE8DF)
+  chip.di-aktif = light-dark(#EDE8DF, #0C0E0D)
+  status.bahaya = light-dark(#B3261E, #FF7A57)
+  status.peringatan = light-dark(#8A5A00, #E8BD55)
+  status.peringatan-lembut = light-dark(rgba(176, 120, 0, 0.12), rgba(232, 189, 85, 0.12))
+  status.sukses = light-dark(#1E6B43, #7FD6A0)
+  media.kartu = #161817  scheme=fixed
+  media.kaca = rgba(12, 14, 13, 0.86)  scheme=fixed
+  media.pita = rgba(12, 14, 13, 0.93)  scheme=fixed
+  media.teks = #EDE8DF  scheme=fixed
+  media.redup = rgba(237, 232, 223, 0.75)  scheme=fixed
+  media.tinta = #0C0E0D  scheme=fixed
+  bayangan.bilah = rgba(0, 0, 0, 0.35)  scheme=fixed
+  bayangan.kartu = rgba(0, 0, 0, 0.18)  scheme=fixed
+  // Tingkat kepercayaan hotspot (SiPongi): sama di kedua mode, seperti legenda petanya.
+  kepercayaan.tinggi = #F01E1E  scheme=fixed
+  kepercayaan.sedang = #FBC02D  scheme=fixed
+  kepercayaan.rendah = #4CAF50  scheme=fixed
+
+// Ikon Feather yang tidak ada di simbol bawaan Exact (garis 2 px, satu warna).
+icons
+  icon.peta = icon(sf "map", svg "icons/peta.svg")
+  icon.siaran = icon(sf "dot.radiowaves.left.and.right", svg "icons/siaran.svg")
+  icon.mata = icon(sf "eye", svg "icons/mata.svg")
+  icon.titik = icon(sf "mappin", svg "icons/titik.svg")
+  icon.bawah = icon(sf "chevron.down", svg "icons/bawah.svg")
+  icon.luring = icon(sf "wifi.slash", svg "icons/luring.svg")
+  icon.awas = icon(sf "exclamationmark.triangle", svg "icons/awas.svg")
+  icon.anonim = icon(sf "eye.slash", svg "icons/anonim.svg")
+  icon.api = icon(sf "flame", svg "icons/api.svg")
