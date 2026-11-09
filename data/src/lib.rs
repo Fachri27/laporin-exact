@@ -9,9 +9,10 @@
 //! | `muatKomentar(id)` | GET fire.nusantara.earth/api/laporan/{id}/komentar | `umpan::olah_komentar` |
 //! | `muatHotspot()` | GET geoplatform.nusantara.earth/api/hotspot | `hotspot::olah_hotspot` |
 //! | `muatLaporanSaya()` | baca app:/data/laporan-saya.json | `simpan::ke_laporan` |
-//! | `kirimLaporan(…)` | baca, lalu tulis berkas yang sama | balasan `{ ok, galat }` |
+//! | `kirimLaporan(…)` | tiket, perkecil & baca foto, POST multipart ke `LAPORIN_API` (`kirim`) | balasan `{ ok, galat }` |
 
 pub mod hotspot;
+pub mod kirim;
 mod shapes;
 pub mod simpan;
 pub mod teks;
@@ -27,7 +28,10 @@ const BATAS_BALASAN: u32 = 16 << 20;
 const BATAS_WAKTU_MS: u32 = 20_000;
 
 #[derive(Debug, Default)]
-pub struct Laporin;
+pub struct Laporin {
+    /// Kiriman yang sedang berjalan di antara `answer` dan `parse` (satu per waktu).
+    kiriman: Option<kirim::Kiriman>,
+}
 
 fn teks_arg(args: &[Value], i: usize) -> Result<&str, DataError> {
     args.get(i).and_then(Value::as_str).ok_or_else(|| DataError::BadArguments(format!("argumen {i} harus teks")))
@@ -66,6 +70,22 @@ fn balasan(ok: bool, galat: &str) -> Answer {
     Answer::Now(Balasan { ok, galat: galat.into() }.to_value())
 }
 
+/// Argumen `kirimLaporan(judul, deskripsi, nama, anonim, epochMs, selisihMenit, lampiran)`.
+fn isian(args: &[Value]) -> Result<kirim::Isian, DataError> {
+    Ok(kirim::Isian {
+        judul: teks_arg(args, 0)?.trim().to_string(),
+        deskripsi: teks_arg(args, 1)?.trim().to_string(),
+        nama: teks_arg(args, 2)?.trim().to_string(),
+        anonim: args.get(3).and_then(Value::as_bool).ok_or_else(|| DataError::BadArguments("argumen 3 harus bool".into()))?,
+        epoch_ms: angka_arg(args, 4)?,
+        selisih_menit: angka_arg(args, 5)?,
+        lampiran: args
+            .get(6)
+            .and_then(<Vec<String> as ContractValue>::from_value)
+            .ok_or_else(|| DataError::BadArguments("argumen 6 harus daftar teks".into()))?,
+    })
+}
+
 impl DataSource for Laporin {
     fn app_id(&self) -> &str {
         // Sama dengan app.json "app": { "id" }: plan yang dipanggang menyebut id ini.
@@ -73,10 +93,17 @@ impl DataSource for Laporin {
     }
 
     fn grants(&self) -> &str {
-        "net.fetch https://fire.nusantara.earth\n\
-         net.fetch https://geoplatform.nusantara.earth\n\
-         fs.read app:/data/laporan-saya.json\n\
-         fs.write app:/data/laporan-saya.json"
+        concat!(
+            "net.fetch https://fire.nusantara.earth\n",
+            "net.fetch https://geoplatform.nusantara.earth\n",
+            "net.fetch ",
+            env!("LAPORIN_API"),
+            "\ndevice.photos fotoAlasan\n",
+            "fs.read app:/data/laporan-saya.json\n",
+            "fs.write app:/data/laporan-saya.json\n",
+            "fs.read app:/tmp\n",
+            "fs.write app:/tmp"
+        )
     }
 
     /// Saat build (bake) dan tanpa I/O: semua sumber dijawab saat aplikasi berjalan.
@@ -102,12 +129,19 @@ impl DataSource for Laporin {
                     ambil(&format!("{}/api/laporan/{id}/komentar", umpan::SITUS))
                 }
             }
-            "muatLaporanSaya" | "kirimLaporan" => Answer::Later(simpan::minta_baca()),
+            "muatLaporanSaya" => Answer::Later(simpan::minta_baca()),
+            "kirimLaporan" => match kirim::Kiriman::mulai(isian(args)?) {
+                Ok((kiriman, minta)) => {
+                    self.kiriman = Some(kiriman);
+                    Answer::Later(minta)
+                }
+                Err(galat) => balasan(false, &galat),
+            },
             lain => return Err(DataError::UnknownSource(lain.into())),
         })
     }
 
-    fn parse(&mut self, _store: &mut Store, source: &str, args: &[Value], outcome: Outcome) -> Result<Answer, DataError> {
+    fn parse(&mut self, _store: &mut Store, source: &str, _args: &[Value], outcome: Outcome) -> Result<Answer, DataError> {
         match source {
             "muatUmpan" => {
                 let u = umpan::olah_umpan(&badan(outcome)?).map_err(|e| gagal(FailureCode::Shape, e))?;
@@ -125,20 +159,19 @@ impl DataSource for Laporin {
                 simpan::Balasan::Isi(semua) => Ok(Answer::Now(simpan::ke_laporan(&semua).to_value())),
                 simpan::Balasan::Tertulis => Ok(Answer::Now(Vec::<LaporanSaya>::new().to_value())),
             },
-            // Penolakan menulis adalah balasan `{ ok: false, galat }`, supaya formulir bisa menampilkannya.
-            "kirimLaporan" => Ok(match simpan::baca_balasan(outcome) {
-                Ok(simpan::Balasan::Isi(mut semua)) => {
-                    let (judul, deskripsi, nama) = (teks_arg(args, 0)?, teks_arg(args, 1)?, teks_arg(args, 2)?);
-                    let (epoch, selisih) = (angka_arg(args, 4)?, angka_arg(args, 5)?);
-                    if judul.trim().is_empty() {
-                        return Ok(balasan(false, "Isi judul singkat dulu."));
+            // Penolakan server adalah balasan `{ ok: false, galat }`, supaya formulir bisa menampilkannya.
+            "kirimLaporan" => {
+                let Some(kiriman) = self.kiriman.as_mut() else {
+                    return Ok(balasan(false, "Kiriman tidak dikenal. Coba kirim lagi."));
+                };
+                Ok(match kiriman.lanjut(outcome) {
+                    kirim::Langkah::Minta(minta) => Answer::Later(minta),
+                    kirim::Langkah::Selesai(ok, galat) => {
+                        self.kiriman = None;
+                        balasan(ok, &galat)
                     }
-                    semua.insert(0, simpan::catatan(judul, deskripsi, nama, epoch, selisih));
-                    Answer::Later(simpan::minta_tulis(&semua))
-                }
-                Ok(simpan::Balasan::Tertulis) => balasan(true, ""),
-                Err(e) => balasan(false, &format!("Laporan gagal disimpan di HP: {e}")),
-            }),
+                })
+            }
             lain => Err(DataError::UnknownSource(lain.into())),
         }
     }

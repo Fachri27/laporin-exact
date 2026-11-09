@@ -13,7 +13,7 @@ fn main() {
     contract::rerun_if_changed(std::path::Path::new("../app.contract"));
     let plan = contract::compile_path(std::path::Path::new("../app.contract"))
         .unwrap_or_else(|e| panic!("app.contract:{e}"));
-    let baked = contract::bake(plan, laporin_data::Laporin).unwrap_or_else(|e| panic!("bake: {e:?}"));
+    let baked = contract::bake(plan, laporin_data::Laporin::default()).unwrap_or_else(|e| panic!("bake: {e:?}"));
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     std::fs::write(out_dir.join("app.plan"), baked.encode()).unwrap();
     println!("cargo:rerun-if-changed=../app.json");
@@ -23,7 +23,7 @@ fn main() {
     let app_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let target = std::env::var("TARGET").unwrap_or_default();
     let manifest = contract::Manifest::read(&app_dir).unwrap_or_else(|e| panic!("app.json: {e}"));
-    let sumber = laporin_data::Laporin;
+    let sumber = laporin_data::Laporin::default();
     let grants = sumber.grants();
     let compat = exact_bake::compatibility_id(&app_dir, "linux", &target, &manifest, Some(grants))
         .unwrap_or_else(|e| panic!("compatibility id: {e}"));

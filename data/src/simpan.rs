@@ -1,5 +1,5 @@
-//! Laporan yang dikirim dari HP ini, disimpan di `app:/data/laporan-saya.json` (mode demo: belum ada
-//! server tujuan). Host Exact menjalankan baca/tulis berkasnya; di sini hanya isi dan urutannya.
+//! Salinan laporan yang terkirim dari HP ini, di `app:/data/laporan-saya.json`, untuk Profil (tamu tidak
+//! punya akun untuk membaca `/api/mobile/saya/laporan`). Host Exact menjalankan baca/tulis berkasnya.
 
 use exact_runner::{Outcome, Request};
 use serde_json::{json, Value as Json};
@@ -73,6 +73,7 @@ pub fn ke_laporan(semua: &[Json]) -> Vec<LaporanSaya> {
             pengirim: teks_di(j, "pengirim"),
             status: teks_di(j, "status"),
             dibuat: teks_di(j, "dibuat"),
+            lampiran: j.get("lampiran").and_then(Json::as_f64).unwrap_or(0.0),
         })
         .filter(|l| !l.id.is_empty())
         .collect()

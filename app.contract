@@ -1,6 +1,10 @@
 // Laporin di Exact: tampilan laporin-apps (bahasa rupa SAKSI) di atas inti Rust (data/).
 // Setiap sumber data di bawah dijawab oleh data/src/lib.rs: umpan & komentar dari
-// fire.nusantara.earth, hotspot dari geoplatform.nusantara.earth, laporan saya di app:/data.
+// fire.nusantara.earth, hotspot dari geoplatform.nusantara.earth, laporan dikirim ke server
+// laporan (LAPORIN_API, mock-server laporin-apps) dan salinannya di app:/data. Foto bukti dari
+// galeri lewat @exact/photos.
+
+use photoAssets, photoLibraryStatus, copyPhotoAsset, PhotoAssetList, PhotoLibraryStatus, PhotoCopy from "@exact/photos"
 
 font "Poppins"
   400 = "assets/fonts/Poppins-Regular.ttf"
@@ -93,6 +97,7 @@ shape LaporanSaya
   pengirim: string
   status: string
   dibuat: string
+  lampiran: number
 
 shape Balasan
   ok: bool
@@ -113,6 +118,13 @@ component Laporin
   state nama = ""
   state anonim = false
   state galat = ""
+  state pilihan = []
+  // Jalur salinan tiap foto terpilih (dari balasan copyPhotoAsset), sejajar dengan `pilihan`.
+  state berkasFoto = []
+  // Galeri dibaca dengan limit baru saat formulir dibuka: bacaan saat boot mendahului terikatnya modul foto
+  // native dan tertahan di tiket izin pengganti (Exact pre-1.0), jadi argumen baru meminta lagi ke modulnya.
+  state batasGaleri = 1
+  state menyalin = ""
   resource waktu = exactTime() as shape Waktu
   resource umpan = muatUmpan() as shape Umpan else empty()
   resource hotspot = muatHotspot() as shape Hotspot else empty()
@@ -120,6 +132,9 @@ component Laporin
   derive idTerbuka = top(nav).name == "laporan" ? top(nav).params.id : ""
   resource komentar = muatKomentar(idTerbuka) as shape Komentar[] else empty()
   mutation terkirim as shape Balasan refreshes saya then setelahKirim
+  resource statusFoto = photoLibraryStatus() as shape PhotoLibraryStatus else empty()
+  resource galeri = photoAssets(limit=batasGaleri) as shape PhotoAssetList else empty()
+  mutation salinan as shape PhotoCopy then setelahSalin
 
   derive saring = umpan.laporan.filter(l => pulau == "" or l.pulau == pulau)
   derive tampil = urutan == "komentar" ? sortBy(saring, l => l.komentar, "desc") : urutan == "suka" ? sortBy(saring, l => l.suka, "desc") : saring
@@ -137,7 +152,10 @@ component Laporin
     nav = select(nav, nama)
   action bukaLapor
     galat = ""
+    batasGaleri = 24
     nav = push(nav, "/lapor")
+  action muatUlangGaleri
+    batasGaleri = batasGaleri == 24 ? 25 : 24
   // Terkirim menggantikan Lapor di tumpukan tab yang membukanya: tutup dulu, lalu pindah tab.
   action keBeranda
     nav = select(back(nav), "beranda")
@@ -161,6 +179,25 @@ component Laporin
     nama = v
   action ubahAnonim(v: bool)
     anonim = v
+  // Foto yang dipilih disalin modul foto ke app:/tmp; inti Rust memperkecil dan mengunggah salinannya.
+  action pilihFoto(id: string)
+    if pilihan.includes(id)
+      let i = pilihan.indexOf(id)
+      pilihan = pilihan.filter(x => x != id)
+      berkasFoto = berkasFoto.filter(p => berkasFoto.indexOf(p) != i)
+    else if pilihan.length < 6 and not pending(salinan)
+      menyalin = id
+      galat = ""
+      send salinan = copyPhotoAsset(asset=id)
+  action setelahSalin
+    match salinan
+      case some(c)
+        if menyalin != "" and not pilihan.includes(menyalin)
+          pilihan = pilihan.concat([menyalin])
+          berkasFoto = berkasFoto.concat([c.path])
+      case none
+        galat = "Foto tidak bisa disalin. Coba pilih lagi."
+    menyalin = ""
   action liveBelum
     showModal("live-belum")
   action kirim
@@ -168,9 +205,12 @@ component Laporin
       galat = "Isi judul singkat dulu."
     else if deskripsi.trim() == ""
       galat = "Ceritakan kondisinya sedikit."
-    else if not pending(terkirim)
+    else if pilihan.length == 0
+      galat = "Sertakan minimal satu foto sebagai bukti."
+    else if not pending(terkirim) and not pending(salinan)
       galat = ""
-      send terkirim = kirimLaporan(judul.trim(), deskripsi.trim(), anonim ? "" : nama.trim(), anonim, waktu.epochAtZero + performanceNow(), waktu.utcOffset)
+      send terkirim = kirimLaporan(judul.trim(), deskripsi.trim(), anonim ? "" : nama.trim(), anonim,
+        waktu.epochAtZero + performanceNow(), waktu.utcOffset, berkasFoto)
   action setelahKirim
     let balas = match terkirim { case some(b) => b, case none => Balasan(ok=false, galat="Tidak ada balasan dari inti Rust.") }
     if balas.ok
@@ -179,6 +219,8 @@ component Laporin
       nama = ""
       anonim = false
       galat = ""
+      pilihan = []
+      berkasFoto = []
       nav = replace(nav, "/terkirim")
     else
       galat = balas.galat
@@ -218,6 +260,8 @@ component Laporin
                   HalamanCari(kueri=kueri, hasil=hasilCari, cari=cari, kembali=back, idIsi=`isi-${e.id}`)
                 else if e.name == "lapor"
                   FormLapor(judul=judul, deskripsi=deskripsi, nama=nama, anonim=anonim, galat=galat, mengirim=pending(terkirim),
+                    galeri=galeri, statusFoto=statusFoto, memuatGaleri=pending(galeri), pilihan=pilihan,
+                    menyalin=pending(salinan), pilihFoto=pilihFoto, muatUlangGaleri=muatUlangGaleri,
                     ubahJudul=ubahJudul, ubahDeskripsi=ubahDeskripsi, ubahNama=ubahNama, ubahAnonim=ubahAnonim,
                     kirim=kirim, kembali=back, idIsi=`isi-${e.id}`)
                 else if e.name == "terkirim"
@@ -671,7 +715,7 @@ component HalamanProfil
             text s.dibuat font-size=10 font-weight=500 letter-spacing=0.4 color="teks.redup"
           text s.judul font-size=16 line-height=1.25 font-weight=700
           text s.deskripsi font-size=13.5 line-height=1.48 color="teks.redup" line-clamp=2
-          text (s.pengirim == "" ? "Dikirim sebagai anonim" : `Dikirim sebagai ${s.pengirim}`) font-size=12
+          text `${s.pengirim == "" ? "Dikirim sebagai anonim" : `Dikirim sebagai ${s.pengirim}`}${s.lampiran > 0 ? ` · ${s.lampiran} foto` : ""}` font-size=12
             font-weight=500 color="teks.redup"
 
 component Statistik
@@ -747,6 +791,13 @@ component FormLapor
     anonim: bool
     galat: string
     mengirim: bool
+    galeri: PhotoAssetList
+    statusFoto: PhotoLibraryStatus
+    memuatGaleri: bool
+    pilihan: string[]
+    menyalin: bool
+    pilihFoto: action
+    muatUlangGaleri: action
     ubahJudul: action
     ubahDeskripsi: action
     ubahNama: action
@@ -767,7 +818,7 @@ component FormLapor
           row gap=10 padding=14 border-radius=16 background-color="aksen.lembut" align-items="flex-start"
             color="aksen.teks" font-size=17
             image "symbol:info"
-            text "Mode demo: laporan disimpan inti Rust di HP ini (app:/data) dan tampil di Profil, belum dikirim ke server."
+            text "Laporan dikirim inti Rust ke mock-server laporin-apps (port 4000); salinannya tampil di Profil."
               font-size=12.5 line-height=1.44 flex=1 min-width=0
           Isian(label="Judul singkat", petunjuk="")
             input value=judul input=ubahJudul placeholder="Mis. “Asap tebal di tepi jalan Trans-Kalimantan”"
@@ -778,6 +829,35 @@ component FormLapor
               placeholder="Contoh: Asap tebal dari arah timur sejak pukul 08.00, api terlihat di tepi kebun…"
               testId="deskripsi" border="none" background-color="transparent" font-size=14.5 line-height=1.45
               color="teks.utama"
+          Isian(label="Foto bukti", petunjuk=`${pilihan.length}/6 foto · diperkecil, tanpa data GPS`)
+            if statusFoto.state == "denied"
+              text "Izin galeri ditolak. Buka Pengaturan HP → Aplikasi → Laporin → Izin, lalu izinkan Foto."
+                font-size=13 line-height=1.45 color="status.bahaya" testId="galeri-ditolak"
+            else if galeri.assets.length == 0
+              if memuatGaleri
+                row align-items="center" gap=12
+                  progress aria-label="Memuat galeri"
+                  button press=muatUlangGaleri testId="muat-galeri" height=34 padding="0 14px" border-radius=17
+                    border="1px solid garis.tegas" display="flex" align-items="center"
+                    text "Muat ulang galeri" font-size=12 font-weight=600
+              else
+                text "Belum ada foto di galeri HP ini." font-size=13 color="teks.redup" testId="galeri-kosong"
+            else
+              scroll overflow-x="auto" overflow-y="hidden" testId="galeri"
+                row gap=8 padding="4px 0"
+                  for a, i in galeri.assets key=a.id
+                    button press=pilihFoto(a.id) testId=`foto-${i + 1}` aria-label=`Foto ${i + 1}`
+                      aria-pressed=pilihan.includes(a.id) width=76 height=76 border-radius=14 overflow="hidden"
+                      position="relative" padding=0 flex-shrink=0
+                      border=(pilihan.includes(a.id) ? "3px solid aksen.isi" : "1px solid garis.tipis")
+                      image a.picture alt=`Foto ${i + 1}` width="100%" height="100%" object-fit="cover"
+                      if pilihan.includes(a.id)
+                        box position="absolute" top=4 right=4 width=22 height=22 border-radius=11 display="flex"
+                          align-items="center" justify-content="center" background-color="aksen.isi" color="aksen.di"
+                          font-size=12
+                          image "symbol:checkmark"
+            if menyalin
+              text "Menyiapkan foto…" font-size=12 color="teks.redup"
           row gap=10 padding=14 border-radius=16 background-color="status.peringatan-lembut" align-items="flex-start"
             color="status.peringatan" font-size=18
             image "symbol:icon.awas"
@@ -805,7 +885,7 @@ component FormLapor
             text galat font-size=13 line-height=1.38 font-weight=500 flex=1 min-width=0 testId="galat"
         button press=kirim disabled=mengirim testId="kirim" height=56 border-radius=28 display="flex"
           align-items="center" justify-content="center" background-color="aksen.isi" color="aksen.di"
-          text (mengirim ? "MENYIMPAN…" : "KIRIM LAPORAN") font-size=16 font-weight=700 letter-spacing=0.5
+          text (mengirim ? "MENGIRIM…" : "KIRIM LAPORAN") font-size=16 font-weight=700 letter-spacing=0.5
 
 component HalamanTerkirim
   props
@@ -813,12 +893,12 @@ component HalamanTerkirim
     keProfil: action
   view
     column padding="40px 20px 40px" gap=16
-      text "MODE DEMO · TERSIMPAN DI HP" font-size=11 font-weight=600 letter-spacing=0.8 color="aksen.teks"
+      text "LAPORAN TERKIRIM" font-size=11 font-weight=600 letter-spacing=0.8 color="aksen.teks"
       column
         text "Terima" font-size=38 line-height=1.21 font-weight=700 letter-spacing=-0.4
         text "kasih sudah" font-size=38 line-height=1.21 font-weight=700 letter-spacing=-0.4
         text "melapor." font-size=38 line-height=1.21 font-weight=700 letter-spacing=-0.4 color="aksen.teks"
-      text "Laporanmu disimpan inti Rust di HP ini. Statusnya bisa dipantau dari Profil." font-size=15 line-height=1.47
+      text "Laporanmu sudah diterima server dan menunggu verifikasi petugas. Statusnya bisa dipantau dari Profil." font-size=15 line-height=1.47
         max-width=340 testId="terima-kasih"
       column border-top="1px solid garis.tipis"
         Langkah(judul="Laporan diterima", status="BARU SAJA", selesai=true)

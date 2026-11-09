@@ -1,5 +1,8 @@
 //! Tipe di batas data dibangkitkan dari shape di `../app.contract` (`contract rust`), jadi field
 //! yang ditambah di sana menjadi galat kompilasi di sini, bukan record yang bergeser satu posisi.
+//!
+//! `LAPORIN_API` (bawaan `http://127.0.0.1:4000`, mock-server laporin-apps lewat `adb reverse`)
+//! dipanggang saat build: grant `net.fetch` harus sama di Mac (bake) dan di HP.
 
 fn main() {
     let path = std::path::Path::new("../app.contract");
@@ -8,4 +11,8 @@ fn main() {
     let rust = contract::rust(&plan).expect("contract rust");
     let out = std::path::Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("shapes.rs");
     std::fs::write(out, rust).expect("tulis shapes.rs");
+
+    println!("cargo:rerun-if-env-changed=LAPORIN_API");
+    let api = std::env::var("LAPORIN_API").unwrap_or_else(|_| "http://127.0.0.1:4000".into());
+    println!("cargo:rustc-env=LAPORIN_API={}", api.trim_end_matches('/'));
 }

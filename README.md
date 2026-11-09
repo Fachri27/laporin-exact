@@ -7,9 +7,29 @@ Android, dengan inti Rust sebagai backend di HP. Exact dipakai lewat path dari `
 |---|---|
 | `app.contract` | Seluruh tampilan: tab Beranda, Peta (hotspot), Live, Profil; Detail, Cari, Lapor, Terkirim |
 | `app.tamber` | Token warna SAKSI terang/gelap dan ikon kustom |
-| `data/` | Inti Rust: umpan dan komentar (fire.nusantara.earth), olahan hotspot (geoplatform), laporan tersimpan (`app:/data`) |
+| `data/` | Inti Rust: umpan dan komentar (fire.nusantara.earth), olahan hotspot (geoplatform), kirim laporan ke server (`kirim.rs`), salinan untuk Profil (`app:/data`) |
 | `android/` | Pustaka yang dimuat pembaca Canvas Exact (`libexactcanvas.so`) |
 | `tools/garis_ke_isi.py` | Ubah ikon bergaris (`tools/ikon-garis/`) jadi path terisi yang bisa digambar Android |
+
+## Kirim laporan ke mock-server
+
+Lapor mengirim ke mock-server laporin-apps, dengan aturan yang sama dengan server sungguhan: judul,
+deskripsi, 1–6 foto bukti, tiket captcha untuk tamu. Inti Rust menjalankan rantainya: `POST /api/mobile/tiket`
+→ perkecil tiap foto (`fs.compressImage`, ≤ 2048 px dan 1,5 MB, tanpa EXIF/GPS) → `POST /api/mobile/laporan`
+(multipart) → salinan ke `app:/data/laporan-saya.json` untuk Profil.
+
+```sh
+cd ../laporin-apps && npm run mock          # http://0.0.0.0:4000
+adb reverse tcp:4000 tcp:4000               # 127.0.0.1:4000 di emulator = Mac
+```
+
+Laporan yang diterima ada di `../laporin-apps/mock-server/unggahan/<waktu>/`. Alamat lain (mis. IP laptop untuk
+HP sungguhan): `LAPORIN_API=http://192.168.1.10:4000 bun exact.mjs android`. Alamat ini dipanggang saat build,
+termasuk grant `net.fetch`-nya.
+
+Foto dipilih dari galeri lewat `@exact/photos`. Dialog izinnya muncul saat formulir dibuka: galeri dibaca dengan
+`limit` baru di `bukaLapor`, karena bacaan saat boot mendahului terikatnya modul foto native dan tertahan
+(Exact pre-1.0).
 
 ## Menjalankan
 
@@ -31,6 +51,7 @@ APK baru.
 
 - Tampilan digambar ke Canvas; yang berupa View asli hanya kolom teks, bilah, dialog dan menu.
 - Gambar hanya JPEG/PNG/SVG: sampul memakai `/_next/image` (membalas JPEG), bukan WebP.
-- Belum ada peta interaktif, video, kamera untuk lampiran, atau LiveKit: tab Peta menampilkan ringkasan
-  hotspot, Live hanya banner, dan laporan disimpan lokal (mode demo).
+- Belum ada peta interaktif, video, kamera, atau LiveKit: tab Peta menampilkan ringkasan hotspot, Live hanya
+  banner, dan lampiran hanya foto dari galeri (paket kamera Exact belum punya implementasi Android).
+- Belum ada login: kiriman sebagai tamu dengan tiket captcha mock (`mock-captcha`), yang hanya diterima mock-server.
 - APK masih build pengembangan (kunci debug, tanpa ikon peluncur).

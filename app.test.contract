@@ -16,23 +16,14 @@ test "formulir menolak judul kosong lalu deskripsi kosong"
   tap "kirim"
   expect text "galat" == "Ceritakan kondisinya sedikit."
 
-test "laporan tersimpan inti Rust dan tampil di Profil"
+test "formulir meminta foto bukti sebelum mengirim ke server"
   tap "tombol-lapor"
   clock settle
   type "judul" "Asap tebal di tepi jalan"
   type "deskripsi" "Asap dari arah timur sejak pagi."
-  type "nama" "Fachri"
   tap "kirim"
-  clock data
-  clock settle
-  expect tree has "terima-kasih"
-  tap "pantau-status"
-  clock data
-  clock settle
-  expect state nav.tab == "profil"
-  expect state saya.0 .judul == "Asap tebal di tepi jalan"
-  expect state saya.0 .pengirim == "Fachri"
-  expect state saya.0 .status == "menunggu"
+  expect text "galat" == "Sertakan minimal satu foto sebagai bukti."
+  expect state nav.tab == "beranda"
 
 test "umpan yang gagal dimuat menawarkan coba lagi"
   fail fetch "https://fire.nusantara.earth"
