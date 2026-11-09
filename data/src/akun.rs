@@ -1,4 +1,5 @@
-//! Akun warga di server laporan (`LAPORIN_API`): Masuk uji, keluar, profil dan "Laporan saya".
+//! Akun warga di server laporan (`LAPORIN_API`): Masuk uji, masuk/daftar dengan email, keluar, profil,
+//! "Laporan saya" dan suka.
 //!
 //! Sesi disimpan di `Store` (rahasia aplikasi, grant `secret.keep`) sebagai JSON `{token, nama, email}`, jadi
 //! Profil tetap menyebut nama pengguna ketika server tidak terjangkau. Balasan 401 berarti sesi sudah tidak
@@ -41,6 +42,19 @@ pub fn minta_masuk_uji(nama: &str) -> Request {
         .timeout(15_000)
 }
 
+/// `POST /masuk/email { email, sandi }`: salah sandi dan akun tanpa sandi sama-sama 401 `{ galat }`.
+pub fn minta_masuk_email(email: &str, sandi: &str) -> Request {
+    Request::post_json(&format!("{API}/api/mobile/masuk/email"), &json!({ "email": email, "sandi": sandi }).to_string())
+        .header("accept", "application/json")
+        .timeout(15_000)
+}
+
+/// `POST /daftar { nama, email, sandi }` → 201 dengan sesi, seperti masuk. Email terpakai = 409 `{ galat }`.
+pub fn minta_daftar(nama: &str, email: &str, sandi: &str) -> Request {
+    let body = json!({ "nama": nama, "email": email, "sandi": sandi }).to_string();
+    Request::post_json(&format!("{API}/api/mobile/daftar"), &body).header("accept", "application/json").timeout(15_000)
+}
+
 pub fn minta_keluar(token: &str) -> Request {
     dengan_token(Request::post_json(&format!("{API}/api/mobile/keluar"), "{}"), token)
 }
@@ -56,6 +70,20 @@ pub fn minta_laporan(token: &str) -> Request {
 pub fn minta_komentar(token: &str, id: &str, isi: &str) -> Request {
     let url = format!("{API}/api/mobile/laporan/{}/komentar", teks::enkode_uri(id));
     dengan_token(Request::post_json(&url, &json!({ "isi": isi }).to_string()), token)
+}
+
+pub fn minta_disukai(token: &str) -> Request {
+    dengan_token(Request::get(&format!("{API}/api/mobile/saya/disukai")), token)
+}
+
+/// `POST` (suka) atau `DELETE` (batal) `/laporan/{id}/suka`.
+pub fn minta_suka(token: &str, id: &str, suka: bool) -> Request {
+    let mut minta = Request::post_json(&format!("{API}/api/mobile/laporan/{}/suka", teks::enkode_uri(id)), "{}");
+    if !suka {
+        minta.method = "DELETE".into();
+        minta.body.clear();
+    }
+    dengan_token(minta, token)
 }
 
 /// Laporkan konten tidak butuh akun; token dikirim bila ada, seperti laporin-apps.
@@ -124,6 +152,25 @@ pub fn sesi(store: &mut Store, outcome: &Outcome) -> Sesi {
             }
         }
         _ => luring,
+    }
+}
+
+/// Id laporan yang disukai akun ini (`GET /saya/disukai` → `{ disukai: [173, …] }`), sebagai teks seperti id umpan.
+pub fn disukai(store: &mut Store, outcome: &Outcome) -> Result<Vec<String>, String> {
+    match outcome {
+        Outcome::Response(r) if r.status == 401 => {
+            lupakan(store);
+            Ok(Vec::new())
+        }
+        Outcome::Response(r) if (200..300).contains(&r.status) => {
+            let j: Json = serde_json::from_slice(&r.body).map_err(|e| format!("JSON disukai: {e}"))?;
+            let butir = j["disukai"].as_array().ok_or("disukai bukan larik")?;
+            Ok(butir
+                .iter()
+                .filter_map(|v| v.as_i64().map(|n| n.to_string()).or_else(|| v.as_str().map(str::to_string)))
+                .collect())
+        }
+        lain => Err(galat(lain)),
     }
 }
 

@@ -7,8 +7,9 @@ Android, dengan inti Rust sebagai backend di HP. Exact dipakai lewat path dari `
 |---|---|
 | `app.contract` | Seluruh tampilan: tab Beranda, Peta (hotspot), Live, Profil; Detail, Cari, Lapor, Terkirim |
 | `app.tamber` | Token warna SAKSI terang/gelap dan ikon kustom |
-| `data/` | Inti Rust: umpan dan komentar (fire.nusantara.earth), olahan hotspot (geoplatform), kirim laporan ke server (`kirim.rs`), salinan untuk Profil (`app:/data`) |
+| `data/` | Inti Rust: umpan dan komentar (`LAPORIN_SITUS`), olahan hotspot (geoplatform), akun & suka (`akun.rs`), kirim laporan ke server (`kirim.rs`), salinan untuk Profil (`app:/data`) |
 | `android/` | Pustaka yang dimuat pembaca Canvas Exact (`libexactcanvas.so`) |
+| `paket/web`, `paket/video` | Paket lokal Kotlin: WebView peta (`web-halaman`) dan pemutar video (`video-putar`) |
 | `tools/garis_ke_isi.py` | Ubah ikon bergaris (`tools/ikon-garis/`) jadi path terisi yang bisa digambar Android |
 
 ## Kirim laporan ke mock-server
@@ -27,15 +28,25 @@ Laporan yang diterima ada di `../laporin-apps/mock-server/unggahan/<waktu>/`. Al
 HP sungguhan): `LAPORIN_API=http://192.168.1.10:4000 bun exact.mjs android`. Alamat ini dipanggang saat build,
 termasuk grant `net.fetch`-nya.
 
+Umpan, gambar dan komentar dibaca dari `LAPORIN_SITUS`, bawaannya sama dengan `LAPORIN_API` (seperti `.env`
+laporin-apps): mock-server meneruskan fire.nusantara.earth dan menambahkan suka & komentar mock, jadi komentar
+dan suka dari satu HP terlihat di HP lain. Tanpa mock-server: `LAPORIN_SITUS=https://fire.nusantara.earth`.
+
 Foto dipilih dari galeri lewat `@exact/photos`. Dialog izinnya muncul saat formulir dibuka: galeri dibaca dengan
 `limit` baru di `bukaLapor`, karena bacaan saat boot mendahului terikatnya modul foto native dan tertahan
 (Exact pre-1.0).
 
-## Masuk uji dan peta
+## Akun, suka, peta dan video
 
-- **Masuk uji** (Profil): `POST /api/mobile/masuk/uji` ke mock-server; sesi `{token, nama, email}` disimpan inti
-  Rust di rahasia aplikasi (`secret.keep sesi-laporin`). Setelah masuk, Profil membaca `/api/mobile/saya` dan
-  `/saya/laporan`, dan Lapor mengirim dengan Bearer token tanpa captcha (kecuali anonim).
+- **Masuk** (Profil): Masuk uji (`POST /api/mobile/masuk/uji`) atau email (`/masuk/email`, daftar lewat
+  `/daftar`) ke mock-server; sesi `{token, nama, email}` disimpan inti Rust di rahasia aplikasi
+  (`secret.keep sesi-laporin`). Setelah masuk, Profil membaca `/api/mobile/saya` dan `/saya/laporan`, dan Lapor
+  mengirim dengan Bearer token tanpa captcha (kecuali anonim).
+- **Suka** (Detail): `POST`/`DELETE /api/mobile/laporan/{id}/suka`; tab *Disukai* di Profil dari `/saya/disukai`.
+  Tamu diminta masuk dulu.
+- **Video** (Detail dan layar penuh): paket lokal `paket/video` (MediaPlayer di TextureView, Kotlin
+  `paket/video/android/Video.kt`). Diputar langsung dari `https://fire.nusantara.earth/media/…`, karena tumpukan
+  jaringan Android menolak HTTP polos ke mock-server. Ketuk tengah = jeda/putar, tombol speaker = bisu.
 - **Peta**: halaman `https://laporin.app/id/embed` di WebView, lewat paket lokal `paket/web` (tag `web-halaman`,
   Kotlin `paket/web/android/Web.kt`). Chip *Ringkasan hotspot* tetap menampilkan olahan Rust dari geoplatform.
 - Setelah mengubah `paket/` atau `node_modules`, hapus `target/android` sebelum `bun exact.mjs android`: build
@@ -64,9 +75,11 @@ belum bisa sama:
 
 - Tampilan digambar ke Canvas; yang berupa View asli hanya kolom teks, bilah, dialog, menu, WebView peta.
 - Gambar hanya JPEG/PNG/SVG: sampul memakai `/_next/image` (membalas JPEG), bukan WebP.
-- Video tidak diputar (kartu menampilkan sampul + pil senyap), kamera belum ada (Ambil foto membuka galeri),
-  media Detail digeser dengan ketuk kiri/kanan (scroll-snap belum dibaca), siaran live (LiveKit) belum ada.
+- Video diputar di Detail dan layar penuh saja (kartu Beranda tetap sampul + pil senyap), tanpa penggeser waktu.
+  Kamera belum ada (Ambil foto membuka galeri), media Detail digeser dengan ketuk kiri/kanan (scroll-snap belum
+  dibaca), siaran live (LiveKit) belum ada.
 - Ikon status bar Android mengikuti skema aplikasi, jadi strip status bar di Detail tetap terang (aslinya gelap).
-- Masuk Google dan email belum ada; Masuk uji ke mock-server saja. Komentar dikirim ke mock-server, tetapi daftar
-  komentar dibaca dari fire.nusantara.earth, jadi komentar baru hanya tampil di HP yang mengirimnya.
+- Masuk Google belum ada (`@exact/sign-in` belum punya implementasi Android); email dan Masuk uji ke mock-server.
+- Sesi masuk hilang setiap kali APK dipasang ulang (`bun exact.mjs android`), padahal token di mock-server masih
+  berlaku: rahasia `secret.keep` tidak terbawa pembaruan APK. Penyebabnya di host Android Exact belum dipastikan.
 - APK masih build pengembangan (kunci debug, tanpa ikon peluncur).

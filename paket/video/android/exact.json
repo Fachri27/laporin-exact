@@ -1,0 +1,14 @@
+{
+  "kind": "implementation",
+  "implements": "@laporin/video@^1.0",
+  "platform": "android",
+  "targets": ["android"],
+  "shapes": {},
+  "options": {},
+  "names": [],
+  "views": ["video-putar"],
+  "hatches": [],
+  "sources": { "kotlin": ["."] },
+  "artifacts": [],
+  "class": "laporin.video.VideoModule"
+}

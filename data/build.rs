@@ -3,6 +3,10 @@
 //!
 //! `LAPORIN_API` (bawaan `http://127.0.0.1:4000`, mock-server laporin-apps lewat `adb reverse`)
 //! dipanggang saat build: grant `net.fetch` harus sama di Mac (bake) dan di HP.
+//!
+//! `LAPORIN_SITUS` (bawaan sama dengan `LAPORIN_API`) adalah asal umpan, gambar dan komentar, seperti
+//! `EXPO_PUBLIC_SITUS_URL` laporin-apps: mock-server meneruskan produksi dan menambahkan suka & komentar
+//! mock, jadi komentar dari satu HP terlihat di HP lain. `https://fire.nusantara.earth` = produksi langsung.
 
 fn main() {
     let path = std::path::Path::new("../app.contract");
@@ -14,5 +18,13 @@ fn main() {
 
     println!("cargo:rerun-if-env-changed=LAPORIN_API");
     let api = std::env::var("LAPORIN_API").unwrap_or_else(|_| "http://127.0.0.1:4000".into());
-    println!("cargo:rustc-env=LAPORIN_API={}", api.trim_end_matches('/'));
+    let api = api.trim_end_matches('/').to_string();
+    println!("cargo:rustc-env=LAPORIN_API={api}");
+
+    println!("cargo:rerun-if-env-changed=LAPORIN_SITUS");
+    let situs = std::env::var("LAPORIN_SITUS").map(|s| s.trim_end_matches('/').to_string()).unwrap_or_else(|_| api.clone());
+    println!("cargo:rustc-env=LAPORIN_SITUS={situs}");
+    // Asal grant `net.fetch` situs: produksi bila situs = LAPORIN_API (yang sudah punya grant sendiri).
+    let grant = if situs == api { "https://fire.nusantara.earth" } else { &situs };
+    println!("cargo:rustc-env=LAPORIN_GRANT_SITUS={grant}");
 }

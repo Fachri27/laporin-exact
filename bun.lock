@@ -7,6 +7,7 @@
       "dependencies": {
         "@exact/geolocation": "file:../exact/packages/geolocation",
         "@exact/photos": "file:../exact/packages/photos",
+        "@laporin/video": "file:./paket/video",
         "@laporin/web": "file:./paket/web",
       },
     },
@@ -15,6 +16,8 @@
     "@exact/geolocation": ["@exact/geolocation@file:../exact/packages/geolocation", {}],
 
     "@exact/photos": ["@exact/photos@file:../exact/packages/photos", {}],
+
+    "@laporin/video": ["@laporin/video@file:paket/video", {}],
 
     "@laporin/web": ["@laporin/web@file:paket/web", {}],
   }

@@ -25,8 +25,9 @@ test "formulir meminta foto bukti sebelum mengirim ke server"
   expect text "galat" == "Sertakan minimal satu foto sebagai bukti."
   expect state nav.tab == "beranda"
 
+// Umpan dibaca dari LAPORIN_SITUS (bawaan mock-server di 127.0.0.1:4000, lihat data/build.rs).
 test "umpan yang gagal dimuat menawarkan coba lagi"
-  fail fetch "https://fire.nusantara.earth"
+  fail fetch "http://127.0.0.1:4000"
   clock data
   expect tree has "coba-lagi"
 
@@ -35,3 +36,18 @@ test "tamu melihat panel Masuk uji di Profil"
   clock settle
   expect tree has "panel-masuk"
   expect tree has "masuk-uji"
+
+test "form email menolak isian kosong dan sandi pendek saat daftar"
+  tap "tab-profil"
+  clock settle
+  tap "masuk-email"
+  tap "kirim-email"
+  expect text "galat-email" == "Isi alamat email."
+  tap "ganti-form-email"
+  tap "kirim-email"
+  expect text "galat-email" == "Isi nama Anda."
+  type "daftar-nama" "Sari Warga"
+  type "email" "sari@contoh.test"
+  type "sandi" "pendek"
+  tap "kirim-email"
+  expect text "galat-email" == "Kata sandi minimal 8 karakter."

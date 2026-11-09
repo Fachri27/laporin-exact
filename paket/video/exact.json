@@ -1,0 +1,19 @@
+{
+  "kind": "interface",
+  "name": "@laporin/video",
+  "version": "1.0.0",
+  "substitute": "implementation",
+  "shapes": {},
+  "views": {
+    "video-putar": {
+      "props": {
+        "sumber": "string",
+        "bisu": "bool",
+        "putar": "bool",
+        "pas": "string"
+      },
+      "events": ["message"]
+    }
+  },
+  "names": []
+}

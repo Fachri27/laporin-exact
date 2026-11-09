@@ -5,12 +5,13 @@
 //!
 //! | Sumber | Permintaan | Olahan |
 //! |---|---|---|
-//! | `muatUmpan()` | GET fire.nusantara.earth/api/umpan | `umpan::olah_umpan` |
-//! | `muatKomentar(id)` | GET fire.nusantara.earth/api/laporan/{id}/komentar | `umpan::olah_komentar` |
+//! | `muatUmpan()` | GET `LAPORIN_SITUS`/api/umpan | `umpan::olah_umpan` |
+//! | `muatKomentar(id)` | GET `LAPORIN_SITUS`/api/laporan/{id}/komentar | `umpan::olah_komentar` |
 //! | `muatHotspot()` | GET geoplatform.nusantara.earth/api/hotspot | `hotspot::olah_hotspot` |
 //! | `muatLaporanSaya()` | baca app:/data/laporan-saya.json | `simpan::ke_laporan` |
 //! | `muatSesi()`, `muatLaporanAkun()` | GET /api/mobile/saya, /saya/laporan dengan sesi di `Store` (`akun`) |
-//! | `masukUji(nama)`, `keluar()` | POST /api/mobile/masuk/uji, /keluar | balasan `{ ok, galat }` |
+//! | `masukUji(nama)`, `masukEmail(email, sandi)`, `daftarEmail(nama, email, sandi)`, `keluar()` | POST /api/mobile/masuk/uji, /masuk/email, /daftar, /keluar | balasan `{ ok, galat }` |
+//! | `muatDisukai()`, `aturSuka(id, suka)` | GET /api/mobile/saya/disukai, POST/DELETE /laporan/{id}/suka | id teks, balasan `{ ok, galat }` |
 //! | `kirimLaporan(…)` | tiket, perkecil & baca foto, POST multipart ke `LAPORIN_API` (`kirim`) | balasan `{ ok, galat }` |
 
 pub mod akun;
@@ -102,7 +103,9 @@ impl DataSource for Laporin {
 
     fn grants(&self) -> &str {
         concat!(
-            "net.fetch https://fire.nusantara.earth\n",
+            "net.fetch ",
+            env!("LAPORIN_GRANT_SITUS"),
+            "\n",
             "net.fetch https://geoplatform.nusantara.earth\n",
             "net.fetch ",
             env!("LAPORIN_API"),
@@ -123,7 +126,8 @@ impl DataSource for Laporin {
             // Bingkai pertama sebagai tamu; sesi tersimpan dibaca saat berjalan.
             "muatSesi" => Ok(Sesi::default().to_value()),
             "muatLaporanAkun" => Ok(Vec::<LaporanAkun>::new().to_value()),
-            "masukUji" | "keluar" | "kirimKomentar" | "laporkanKonten" => Err(DataError::Unavailable("dijawab saat berjalan".into())),
+            "muatDisukai" => Ok(Vec::<String>::new().to_value()),
+            "masukUji" | "masukEmail" | "daftarEmail" | "aturSuka" | "keluar" | "kirimKomentar" | "laporkanKonten" => Err(DataError::Unavailable("dijawab saat berjalan".into())),
             "muatUmpan" | "muatHotspot" | "muatKomentar" | "muatLaporanSaya" | "kirimLaporan" => {
                 Err(DataError::Unavailable("dijawab saat berjalan".into()))
             }
@@ -155,6 +159,23 @@ impl DataSource for Laporin {
             "masukUji" => {
                 let nama = teks_arg(args, 0)?.trim();
                 Answer::Later(akun::minta_masuk_uji(if nama.is_empty() { "Penguji" } else { nama }))
+            }
+            "masukEmail" => Answer::Later(akun::minta_masuk_email(teks_arg(args, 0)?.trim(), teks_arg(args, 1)?)),
+            "daftarEmail" => {
+                let (nama, email, sandi) = (teks_arg(args, 0)?.trim(), teks_arg(args, 1)?.trim(), teks_arg(args, 2)?);
+                Answer::Later(akun::minta_daftar(nama, email, sandi))
+            }
+            "muatDisukai" => match akun::tersimpan(store) {
+                Some(s) => Answer::Later(akun::minta_disukai(&s.token)),
+                None => Answer::Now(Vec::<String>::new().to_value()),
+            },
+            "aturSuka" => {
+                let id = teks_arg(args, 0)?;
+                let suka = args.get(1).and_then(Value::as_bool).ok_or_else(|| DataError::BadArguments("argumen 1 harus bool".into()))?;
+                match akun::tersimpan(store) {
+                    None => balasan(false, "Masuk dulu untuk menyukai."),
+                    Some(s) => Answer::Later(akun::minta_suka(&s.token, id, suka)),
+                }
             }
             "keluar" => match akun::tersimpan(store) {
                 Some(s) => Answer::Later(akun::minta_keluar(&s.token)),
@@ -190,11 +211,15 @@ impl DataSource for Laporin {
                 let daftar = akun::laporan(store, &outcome).map_err(|e| gagal(FailureCode::Offline, e))?;
                 Ok(Answer::Now(daftar.to_value()))
             }
-            "masukUji" => Ok(match akun::simpan_masuk(store, &outcome) {
+            "muatDisukai" => {
+                let daftar = akun::disukai(store, &outcome).map_err(|e| gagal(FailureCode::Offline, e))?;
+                Ok(Answer::Now(daftar.to_value()))
+            }
+            "masukUji" | "masukEmail" | "daftarEmail" => Ok(match akun::simpan_masuk(store, &outcome) {
                 Ok(_) => balasan(true, ""),
                 Err(e) => balasan(false, &e),
             }),
-            "kirimKomentar" | "laporkanKonten" => Ok(match &outcome {
+            "kirimKomentar" | "laporkanKonten" | "aturSuka" => Ok(match &outcome {
                 Outcome::Response(r) if (200..300).contains(&r.status) => balasan(true, ""),
                 lain => balasan(false, &akun::galat(lain)),
             }),

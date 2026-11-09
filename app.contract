@@ -1,9 +1,10 @@
 // Laporin di Exact: tampilan laporin-apps (bahasa rupa SAKSI) di atas inti Rust (data/).
-// Setiap sumber data di bawah dijawab oleh data/src/lib.rs: umpan & komentar dari
-// fire.nusantara.earth, hotspot dari geoplatform.nusantara.earth, laporan dikirim ke server
-// laporan (LAPORIN_API, mock-server laporin-apps) dan salinannya di app:/data. Foto bukti dari
-// galeri lewat @exact/photos. Akun Masuk uji dan "Laporan saya" dari server laporan; peta dari laporin.app
-// (WebView, paket lokal paket/web).
+// Setiap sumber data di bawah dijawab oleh data/src/lib.rs: umpan & komentar dari LAPORIN_SITUS
+// (bawaan mock-server, yang meneruskan fire.nusantara.earth plus suka & komentar mock), hotspot dari
+// geoplatform.nusantara.earth, laporan dikirim ke server laporan (LAPORIN_API, mock-server laporin-apps)
+// dan salinannya di app:/data. Foto bukti dari galeri lewat @exact/photos. Akun (Masuk uji, email), suka
+// dan "Laporan saya" dari server laporan; peta dari laporin.app (WebView, paket lokal paket/web); video
+// diputar MediaPlayer (paket lokal paket/video).
 
 use photoAssets, photoLibraryStatus, copyPhotoAsset, PhotoAssetList, PhotoLibraryStatus, PhotoCopy from "@exact/photos"
 use getCurrentPosition, GeolocationPosition from "@exact/geolocation"
@@ -54,6 +55,8 @@ shape Laporan
   inisial: string
   jumlahKredit: number
   galeri: string[]
+  // Sejajar dengan `galeri`: alamat video media itu, "" untuk foto.
+  galeriVideo: string[]
   jumlahMedia: number
   adaVideo: bool
   vertikal: bool
@@ -136,6 +139,10 @@ shape LaporanAkun
   sampul: string
   berkas: number
 
+shape Viewport
+  width: number
+  height: number
+
 shape Balasan
   ok: bool
   galat: string
@@ -146,6 +153,12 @@ fn labelUrut(u: string): string = u == "komentar" ? "Paling dikomentari" : u == 
 fn cocokTeks(t: string, q: string): bool = t.toLowerCase().includes(q.trim().toLowerCase())
 fn cocok(l: Laporan, q: string): bool = cocokTeks(l.judul, q) or cocokTeks(l.lokasi, q) or cocokTeks(l.tempat, q) or cocokTeks(l.pulau, q) or cocokTeks(l.deskripsi, q) or cocokTeks(l.kredit, q)
 fn gambarKe(l: Laporan, s: string): string = match parseNumber(s) { case some(n) => (match l.galeri.at(n) { case some(g) => g, case none => l.sampul }), case none => l.sampul }
+fn videoKe(l: Laporan, i: number): string = match l.galeriVideo.at(i) { case some(v) => v, case none => "" }
+// Suka efektif: daftar server, ditambah atau dibatalkan dari HP ini sejak daftar itu dimuat.
+fn sukaDari(id: string, server: string[], tambah: string[], batal: string[]): bool = (server.includes(id) and not batal.includes(id)) or tambah.includes(id)
+// Angka suka di Detail: angka umpan ditambah/dikurangi suka dari HP ini sejak umpan dimuat.
+fn jumlahSuka(n: number, awal: bool, kini: bool): number = kini and n < 1 ? 1 : n + (kini and not awal ? 1 : 0) - (awal and not kini and n > 0 ? 1 : 0)
+fn videoDari(l: Laporan, s: string): string = match parseNumber(s) { case some(n) => videoKe(l, n), case none => "" }
 fn alasanJudul(a: string): string = a == "palsu" ? "Informasi palsu" : a == "tidak-pantas" ? "Konten tidak pantas" : a == "kebencian" ? "Ujaran kebencian" : a == "spam" ? "Spam" : a == "bahaya" ? "Membahayakan orang" : "Lainnya"
 fn alasanPetunjuk(a: string): string = a == "palsu" ? "Atau bukan kejadian karhutla" : a == "tidak-pantas" ? "Kekerasan atau seksual" : a == "kebencian" ? "Pelecehan atau ancaman" : a == "spam" ? "Iklan atau penipuan" : a == "bahaya" ? "Atau membuka data pribadi" : "Jelaskan di kolom rincian"
 fn pengirimLabel(s: LaporanSaya): string = s.anonim ? "Dikirim sebagai anonim" : s.pengirim == "" ? "Dikirim tanpa nama" : `Dikirim sebagai ${s.pengirim}`
@@ -178,10 +191,14 @@ component Laporin
   state simpanan = [] persist
   state filterCari = "semua"
   state isiKomentar = ""
-  state komentarSaya = []
   state alasanLapor = ""
   state catatanLapor = ""
+  // Suka dari HP ini di atas daftar server (`disukai`): ditambah atau dibatalkan sejak daftar itu dimuat.
+  state sukaTambah = []
+  state sukaBatal = []
+  state idSuka = ""
   resource waktu = exactTime() as shape Waktu
+  resource viewport = exactViewport() as shape Viewport
   resource umpan = muatUmpan() as shape Umpan else empty()
   resource hotspot = muatHotspot() as shape Hotspot else empty()
   resource saya = muatLaporanSaya() as shape LaporanSaya[] else empty()
@@ -190,14 +207,17 @@ component Laporin
   mutation terkirim as shape Balasan refreshes saya, laporanAkun, sesi then setelahKirim
   resource sesi = muatSesi() as shape Sesi else empty()
   resource laporanAkun = muatLaporanAkun() as shape LaporanAkun[] else empty()
-  mutation masuk as shape Balasan refreshes sesi, laporanAkun then setelahMasuk
-  mutation keluarSesi as shape Balasan refreshes sesi, laporanAkun
+  resource disukai = muatDisukai() as shape string[] else empty()
+  mutation masuk as shape Balasan refreshes sesi, laporanAkun, disukai then setelahMasuk
+  mutation keluarSesi as shape Balasan refreshes sesi, laporanAkun, disukai
+  mutation sukaDikirim as shape Balasan refreshes sesi then setelahSuka
   derive galatMasuk = match masuk { case some(b) => b.galat, case none => "" }
   resource statusFoto = photoLibraryStatus() as shape PhotoLibraryStatus else empty()
   resource galeri = photoAssets(limit=batasGaleri) as shape PhotoAssetList else empty()
   mutation salinan as shape PhotoCopy then setelahSalin
   mutation lokasi as shape GeolocationPosition
-  mutation komentarDikirim as shape Balasan then setelahKomentar
+  // Daftar komentar dari LAPORIN_SITUS (mock) sudah memuat komentar yang baru dikirim: dimuat ulang setelah kirim.
+  mutation komentarDikirim as shape Balasan refreshes komentar then setelahKomentar
   mutation dilaporkan as shape Balasan
   derive adaLokasi = match lokasi { case some(p) => true, case none => false }
   derive latKini = match lokasi { case some(p) => p.coords.latitude, case none => 0 }
@@ -215,7 +235,10 @@ component Laporin
   derive hasilCari = filterCari == "video" ? dasarCari.filter(l => l.adaVideo) : filterCari == "suka" ? sortBy(dasarCari, l => l.suka, "desc") : filterCari == "terdekat" and adaLokasi ? sortBy(dasarCari, l => (l.lat - latKini) * (l.lat - latKini) + (l.lng - lngKini) * (l.lng - lngKini)) : dasarCari
   derive mencariLaporan = kueri.trim() != "" or filterCari != "semua"
   // Bilah bawah tersembunyi di layar penuh dan lembar (Lapor, Galeri, Foto, Komentar, Laporkan, Terkirim), seperti aslinya.
-  derive bilahTampil = not ["lapor", "terkirim", "galeri", "foto", "komentar", "laporkan"].includes(top(nav).name)
+  // Keyboard terbuka di HP potret: viewport menyusut di bawah ±1,6× lebarnya. Bilah bawah tidak ikut naik di atas
+  // keyboard (aslinya tersembunyi di belakangnya), supaya isian yang sedang diketik tidak tertutup.
+  derive papanKetik = viewport.width > 0 and viewport.width < 600 and viewport.height < viewport.width * 1.6
+  derive bilahTampil = not papanKetik and not ["lapor", "terkirim", "galeri", "foto", "komentar", "laporkan"].includes(top(nav).name)
 
   action back
     nav = back(nav)
@@ -254,7 +277,6 @@ component Laporin
       send komentarDikirim = kirimKomentar(idTerbuka, isiKomentar.trim())
   action setelahKomentar
     if galatKomentar == ""
-      komentarSaya = komentarSaya.concat([Komentar(id=`${idTerbuka}-${komentarSaya.length}`, nama=sesi.nama, inisial=sesi.inisial, isi=isiKomentar.trim(), waktu="baru saja", balasan=0)])
       isiKomentar = ""
   action pilihAlasan(a: string)
     alasanLapor = a
@@ -276,8 +298,25 @@ component Laporin
     openURL("https://fire.nusantara.earth/id")
   action tanyaKeluar
     showModal("konfirmasi-keluar")
-  action emailBelum
-    showModal("email-belum")
+  // Tamu yang menyukai diminta masuk dulu, seperti popup "masuk dulu" aslinya.
+  action tekanSuka(id: string, kini: bool)
+    if not sesi.masuk
+      showModal("perlu-masuk")
+    else if not pending(sukaDikirim)
+      idSuka = id
+      if kini
+        sukaTambah = sukaTambah.filter(x => x != id)
+        sukaBatal = sukaBatal.concat([id])
+      else
+        sukaBatal = sukaBatal.filter(x => x != id)
+        sukaTambah = sukaTambah.concat([id])
+      send sukaDikirim = aturSuka(id, not kini)
+  // Server menolak: kembali ke daftar server untuk laporan itu.
+  action setelahSuka
+    let ok = match sukaDikirim { case some(b) => b.ok, case none => false }
+    if not ok
+      sukaTambah = sukaTambah.filter(x => x != idSuka)
+      sukaBatal = sukaBatal.filter(x => x != idSuka)
   action muatUlangGaleri
     batasGaleri = batasGaleri == 24 ? 25 : 24
   // Terkirim menggantikan Lapor di tumpukan tab yang membukanya: tutup dulu, lalu pindah tab.
@@ -292,7 +331,10 @@ component Laporin
   action cari(v: string)
     kueri = v
   action muatUlang
+    sukaTambah = []
+    sukaBatal = []
     refresh umpan
+    refresh disukai
   action muatUlangHotspot
     refresh hotspot
   action ubahJudul(v: string)
@@ -352,10 +394,20 @@ component Laporin
     namaUji = n
     if not pending(masuk)
       send masuk = masukUji(n)
+  action masukLewatEmail(daftar: bool, namaDaftar: string, email: string, sandi: string)
+    if not pending(masuk)
+      if daftar
+        send masuk = daftarEmail(namaDaftar.trim(), email.trim(), sandi)
+      else
+        send masuk = masukEmail(email.trim(), sandi)
   action setelahMasuk
     if galatMasuk == ""
       namaUji = ""
+      sukaTambah = []
+      sukaBatal = []
   action tekanKeluar
+    sukaTambah = []
+    sukaBatal = []
     send keluarSesi = keluar()
     nav = select(back(nav), "profil")
   action liveBelum
@@ -431,25 +483,30 @@ component Laporin
                   scroll id=`isi-${e.id}` flex=1 min-height=0
                     if sesi.masuk
                       ProfilAkun(sesi=sesi, laporan=laporanAkun, memuat=pending(laporanAkun), gagal=failed(laporanAkun),
-                        tersimpan=umpan.laporan.filter(l => simpanan.includes(l.id)), buatLaporan=bukaLapor)
+                        tersimpan=umpan.laporan.filter(l => simpanan.includes(l.id)), buatLaporan=bukaLapor,
+                        disukai=umpan.laporan.filter(l => sukaDari(l.id, disukai, sukaTambah, sukaBatal)),
+                        memuatSuka=(pending(disukai) or pending(umpan)))
                     else
                       HalamanProfil(namaUji=namaUji, ubahNamaUji=ubahNamaUji, masuk=tekanMasuk, memuatMasuk=pending(masuk),
-                        galatMasuk=galatMasuk, emailBelum=emailBelum)
+                        galatMasuk=galatMasuk, masukEmail=masukLewatEmail)
                 else if e.name == "laporan"
                   scroll id=`isi-${e.id}` flex=1 min-height=0 background-color="latar.halaman"
                     for lap in umpan.laporan.filter(x => x.id == e.params.id) key=lap.id
+                      // Video hanya diputar selama Detail ini paling atas (bukan di bawah Komentar atau Foto).
                       DetailLaporan(lap=lap, serupa=umpan.laporan.filter(x => x.id != lap.id and x.tempat == lap.tempat).slice(0, 6),
                         tersimpan=simpanan.includes(lap.id), simpan=toggleSimpan(lap.id), kembali=back,
-                        laporkan=bukaLaporkan(lap.id))
+                        laporkan=bukaLaporkan(lap.id), aktif=(e.id == top(nav).id), disukai=sukaDari(lap.id, disukai, sukaTambah, sukaBatal),
+                        jumlahSuka=jumlahSuka(lap.suka, disukai.includes(lap.id), sukaDari(lap.id, disukai, sukaTambah, sukaBatal)),
+                        suka=tekanSuka(lap.id, sukaDari(lap.id, disukai, sukaTambah, sukaBatal)))
                     if umpan.laporan.filter(x => x.id == e.params.id).length == 0
                       Kosong(ikon="symbol:icon.luring", pesan="Laporan ini belum muncul di beranda. Coba lagi beberapa menit lagi.")
                 else if e.name == "komentar"
-                  HalamanKomentar(komentar=komentarSaya.filter(k => k.id.startsWith(`${e.params.id}-`)).concat(komentar),
+                  HalamanKomentar(komentar=komentar,
                     memuat=pending(komentar), masuk=sesi.masuk, isi=isiKomentar, ubahIsi=ubahIsiKomentar, kirim=kirimKomentarIni,
                     mengirim=pending(komentarDikirim), galat=galatKomentar, keProfil=keProfilTab, kembali=back, idIsi=`isi-${e.id}`)
                 else if e.name == "foto"
                   for lap in umpan.laporan.filter(x => x.id == e.params.id) key=lap.id
-                    HalamanFoto(gambar=gambarKe(lap, e.params.indeks), kembali=back)
+                    HalamanFoto(gambar=gambarKe(lap, e.params.indeks), video=videoDari(lap, e.params.indeks), kembali=back)
                 else if e.name == "laporkan"
                   HalamanLaporkan(judul=(match first(umpan.laporan.filter(x => x.id == e.params.id)) { case some(l) => l.judul, case none => "" }),
                     alasan=alasanLapor, pilihAlasan=pilihAlasan, catatan=catatanLapor, ubahCatatan=ubahCatatan,
@@ -495,10 +552,12 @@ component Laporin
           text "Batal"
         button press=tekanKeluar commandfor="konfirmasi-keluar" command="close" destructive=true testId="keluar-ya"
           text "Keluar"
-      dialog id="email-belum" role="alertdialog" aria-label="Masuk dengan email"
-        text "Masuk atau daftar dengan email belum tersedia di versi Exact ini. Pakai Login uji di bawahnya."
-        button commandfor="email-belum" command="close" testId="email-ok"
-          text "Mengerti"
+      dialog id="perlu-masuk" role="alertdialog" aria-label="Masuk dulu"
+        text "Masuk dulu untuk menyukai laporan. Melapor tetap bisa tanpa akun."
+        button commandfor="perlu-masuk" command="close" testId="perlu-masuk-nanti"
+          text "Nanti"
+        button press=keProfilTab commandfor="perlu-masuk" command="close" testId="perlu-masuk-ya"
+          text "Masuk"
       dialog id="live-belum" role="alertdialog" aria-label="Siaran langsung belum tersedia"
         text "Siaran langsung memakai LiveKit (WebRTC), yang belum didukung Exact di Android. Daftar siaran publik tetap tampil di sini begitu tersedia."
         button commandfor="live-belum" command="close" testId="live-belum-ok"
@@ -749,12 +808,36 @@ component DetailLaporan
     simpan: action
     kembali: action
     laporkan: action
-  // Penggeser media: ketuk sisi kanan/kiri foto untuk maju/mundur (Exact belum membaca scroll-snap).
+    aktif: bool
+    disukai: bool
+    jumlahSuka: number
+    suka: action
+  // Penggeser media: ketuk sisi kanan/kiri untuk maju/mundur (Exact belum membaca scroll-snap); ketuk tengah video
+  // untuk jeda/putar. Suara menyala seperti aslinya; sampul menutupi video sampai bingkai pertamanya tampil.
   state indeks = 0
+  state bisu = false
+  state jeda = false
+  state bingkai = false
+  state galatVideo = false
+  derive video = videoKe(lap, indeks)
   action maju
     indeks = indeks + 1 < lap.galeri.length ? indeks + 1 : indeks
+    lepasVideo()
   action mundur
     indeks = indeks > 0 ? indeks - 1 : 0
+    lepasVideo()
+  action lepasVideo
+    jeda = false
+    bingkai = false
+    galatVideo = false
+  action gantiBisu
+    bisu = not bisu
+  action gantiJeda
+    jeda = not jeda
+  action pesanVideo(v: string)
+    if v == "main" or v == "jeda"
+      bingkai = true
+    galatVideo = v.startsWith("galat")
   action bagikan
     share(title=lap.judul, text=lap.judul, url=`https://fire.nusantara.earth/id/fire/${lap.slug}`)
   view
@@ -764,14 +847,30 @@ component DetailLaporan
           if lap.galeri.length == 0 and lap.sampul != ""
             image lap.sampul alt=lap.judul position="absolute" inset=0 width="100%" height="100%" object-fit="cover"
           for g, i in lap.galeri key=g
-            if i == indeks
+            if i == indeks and not (video != "" and bingkai)
               image g alt=lap.judul position="absolute" inset=0 width="100%" height="100%" object-fit="cover"
-          if lap.galeri.length > 1
+          if video != ""
+            video-putar sumber=video bisu=bisu putar=(aktif and not jeda) pas="contain" message=pesanVideo
+              position="absolute" inset=0 width="100%" height="100%" aria-label="Video laporan" testId="video-detail"
+          if lap.galeri.length > 1 or video != ""
             row position="absolute" inset=0
-              button press=mundur aria-label="Foto sebelumnya" testId="media-mundur" flex=1 height="100%" padding=0
-                background-color="transparent"
-              button press=maju aria-label="Foto berikutnya" testId="media-maju" flex=1 height="100%" padding=0
-                background-color="transparent"
+              if lap.galeri.length > 1
+                button press=mundur aria-label="Media sebelumnya" testId="media-mundur" flex=1 height="100%" padding=0
+                  background-color="transparent"
+              if video != ""
+                button press=gantiJeda aria-label=(jeda ? "Putar video" : "Jeda video") testId="video-ketuk" flex=2
+                  height="100%" padding=0 display="flex" align-items="center" justify-content="center"
+                  background-color="transparent"
+                  if jeda or galatVideo
+                    box width=64 height=64 border-radius=32 display="flex" align-items="center" justify-content="center"
+                      background-color="media.teks" color="media.tinta" font-size=28
+                      image "symbol:play-fill"
+              if lap.galeri.length > 1
+                button press=maju aria-label="Media berikutnya" testId="media-maju" flex=1 height="100%" padding=0
+                  background-color="transparent"
+          if galatVideo
+            text "Video tidak bisa diputar. Ketuk untuk mencoba lagi." position="absolute" left=12 right=12 bottom=10
+              font-size=12 color="media.teks" text-align="center" testId="video-galat"
           row position="absolute" top=8 left=8 right=12 align-items="center" justify-content="space-between"
             button press=kembali aria-label="Kembali" testId="kembali" width=44 height=44 border-radius=22
               display="flex" align-items="center" justify-content="center" background-color="media.kaca"
@@ -781,6 +880,11 @@ component DetailLaporan
               row align-items="center" gap=6 padding="7px 11px" border-radius=12 background-color="media.kaca"
                 box width=7 height=7 border-radius=4 background-color="aksen.isi"
                 text lap.tempat.toUpperCase() font-size=11 font-weight=600 letter-spacing=0.6 color="media.teks" line-clamp=1
+              if video != ""
+                button press=gantiBisu aria-label=(bisu ? "Nyalakan suara" : "Bisukan") testId="video-suara" width=44
+                  height=44 border-radius=22 display="flex" align-items="center" justify-content="center" padding=0
+                  background-color="media.kaca" color="media.teks" font-size=19
+                  image (bisu ? "symbol:speaker-mute" : "symbol:speaker")
               link href=path("foto", lap.id, `${indeks}`) aria-label="Layar penuh" testId="layar-penuh"
                 box width=44 height=44 border-radius=22 display="flex" align-items="center" justify-content="center"
                   background-color="media.kaca" color="media.teks" font-size=19
@@ -825,11 +929,13 @@ component DetailLaporan
             text "SUMBER" font-size=9 font-weight=500 letter-spacing=0.7 color="teks.redup"
             text lap.kredit.toUpperCase() font-size=11 line-height=1.36 font-weight=600 line-clamp=2
         row gap=8 align-items="center" margin-bottom=22
-          row height=44 padding="0 16px" border-radius=22 border="1px solid garis.tipis" align-items="center" gap=6
-            font-size=18
-            image "symbol:heart"
-            if lap.suka > 0
-              text hitung(lap.suka) font-size=13 font-weight=700 testId="jumlah-suka"
+          button press=suka testId="suka" aria-label=`${disukai ? "Batal suka" : "Suka"}, ${jumlahSuka} suka`
+            height=44 padding="0 16px" border-radius=22 display="flex" align-items="center" gap=6 font-size=18
+            border=(disukai ? "1px solid aksen.isi" : "1px solid garis.tipis")
+            background-color=(disukai ? "aksen.isi" : "transparent") color=(disukai ? "aksen.di" : "teks.utama")
+            image (disukai ? "symbol:heart-fill" : "symbol:heart")
+            if jumlahSuka > 0
+              text hitung(jumlahSuka) font-size=13 font-weight=700 testId="jumlah-suka"
           link href=path("komentar", lap.id) testId="buka-komentar"
             row height=44 padding="0 16px" border-radius=22 border="1px solid garis.tipis" align-items="center" gap=6
               font-size=17
@@ -838,7 +944,8 @@ component DetailLaporan
                 text hitung(lap.komentar) font-size=13 font-weight=700
           TombolBulat(ikon="symbol:icon.bagikan", label="Bagikan", tekan=bagikan, uji="bagikan")
           box flex=1
-          button press=laporkan testId="laporkan" display="flex" align-items="center" gap=6 font-size=16 color="teks.redup"
+          button press=laporkan testId="laporkan" display="flex" align-items="center" gap=6 padding=0 font-size=16
+            background-color="transparent" color="teks.redup"
             image "symbol:icon.bendera"
             text "Laporkan" font-size=13 font-weight=600
       if serupa.length > 0
@@ -959,7 +1066,38 @@ component HalamanProfil
     masuk: action
     memuatMasuk: bool
     galatMasuk: string
-    emailBelum: action
+    masukEmail: action
+  // Form email tertutup dulu, seperti aslinya; isian kosong dan sandi pendek dijawab di sini, sisanya oleh server.
+  state formEmail = "tutup"
+  state namaDaftar = ""
+  state email = ""
+  state sandi = ""
+  state lihatSandi = false
+  state galatEmail = ""
+  derive daftar = formEmail == "daftar"
+  action bukaForm(ke: string)
+    formEmail = ke
+    galatEmail = ""
+  action ubahNamaDaftar(v: string)
+    namaDaftar = v
+  action ubahEmail(v: string)
+    email = v
+  action ubahSandi(v: string)
+    sandi = v
+  action gantiLihatSandi
+    lihatSandi = not lihatSandi
+  action kirimEmail
+    if daftar and namaDaftar.trim() == ""
+      galatEmail = "Isi nama Anda."
+    else if email.trim() == ""
+      galatEmail = "Isi alamat email."
+    else if sandi == ""
+      galatEmail = "Isi kata sandi."
+    else if daftar and sandi.length < 8
+      galatEmail = "Kata sandi minimal 8 karakter."
+    else
+      galatEmail = ""
+      masukEmail(daftar, namaDaftar, email, sandi)
   view
     column padding-bottom=120
       KepalaProfil()
@@ -977,11 +1115,43 @@ component HalamanProfil
             text "G" font-size=19 font-weight=700
             text "Lanjutkan dengan Google" font-size=15 font-weight=700
           text "Masuk dengan Google belum tersedia di versi aplikasi ini." font-size=12 line-height=1.42 color="teks.redup"
-          button press=emailBelum testId="masuk-email" min-height=52 border-radius=26 border="1px solid garis.tegas"
-            display="flex" align-items="center" justify-content="center" gap=10 background-color="transparent"
-            color="teks.utama" font-size=19
-            image "symbol:icon.surel"
-            text "Masuk atau daftar dengan email" font-size=15 font-weight=700
+          if formEmail == "tutup"
+            button press=bukaForm("masuk") testId="masuk-email" min-height=52 border-radius=26 border="1px solid garis.tegas"
+              display="flex" align-items="center" justify-content="center" gap=10 background-color="transparent"
+              color="teks.utama" font-size=19
+              image "symbol:icon.surel"
+              text "Masuk atau daftar dengan email" font-size=15 font-weight=700
+          else
+            column gap=10 testId="form-email"
+              text (daftar ? "DAFTAR DENGAN EMAIL" : "MASUK DENGAN EMAIL") font-size=11 font-weight=600 letter-spacing=0.9
+                color="teks.redup"
+              if daftar
+                Isian(label="Nama", petunjuk="Tampil bersama komentar dan siaran Anda.")
+                  input value=namaDaftar input=ubahNamaDaftar aria-label="Nama" maxlength=100 autocomplete="name"
+                    testId="daftar-nama" border="none" background-color="transparent" font-size=15 font-weight=500
+                    color="teks.utama"
+              Isian(label="Email", petunjuk="")
+                input type="email" value=email input=ubahEmail aria-label="Email" maxlength=254 autocomplete="email"
+                  testId="email" border="none" background-color="transparent" font-size=15 font-weight=500 color="teks.utama"
+              Isian(label="Kata sandi", petunjuk=(daftar ? "Minimal 8 karakter." : ""))
+                input type=(lihatSandi ? "text" : "password") value=sandi input=ubahSandi submit=kirimEmail
+                  aria-label="Kata sandi" autocomplete=(daftar ? "new-password" : "current-password") testId="sandi"
+                  border="none" background-color="transparent" font-size=15 font-weight=500 color="teks.utama"
+              button press=gantiLihatSandi role="switch" aria-checked=lihatSandi testId="lihat-sandi" align-self="flex-start"
+                display="flex" align-items="center" gap=6 padding=0 background-color="transparent" color="teks.redup"
+                font-size=16
+                image (lihatSandi ? "symbol:icon.anonim" : "symbol:icon.mata")
+                text (lihatSandi ? "Sembunyikan kata sandi" : "Tampilkan kata sandi") font-size=12 line-height=1.42
+              button press=kirimEmail disabled=memuatMasuk testId="kirim-email" min-height=52 border-radius=26
+                display="flex" align-items="center" justify-content="center" background-color="aksen.isi" color="aksen.di"
+                text (memuatMasuk ? "Memproses…" : daftar ? "Daftar & masuk" : "Masuk") font-size=15 font-weight=700
+              if galatEmail != ""
+                text galatEmail font-size=13 line-height=1.45 font-weight=500 color="status.bahaya" testId="galat-email"
+              row flex-wrap="wrap" align-items="center" gap=4
+                text (daftar ? "Sudah punya akun?" : "Belum punya akun?") font-size=12 line-height=1.42 color="teks.redup"
+                button press=bukaForm(daftar ? "masuk" : "daftar") testId="ganti-form-email" padding=0
+                  background-color="transparent" color="aksen.teks"
+                  text (daftar ? "Masuk" : "Daftar dengan email") font-size=12 line-height=1.42 font-weight=600
           column padding=14 gap=12 border-radius=20 background-color="latar.redup"
             text "LOGIN UJI · TANPA GOOGLE" font-size=11 font-weight=600 letter-spacing=0.8 color="teks.redup"
             row gap=8 align-items="center"
@@ -1018,6 +1188,8 @@ component ProfilAkun
     gagal: bool
     tersimpan: Laporan[]
     buatLaporan: action
+    disukai: Laporan[]
+    memuatSuka: bool
   state tab = "laporan"
   action pilihTab(t: string)
     tab = t
@@ -1057,34 +1229,49 @@ component ProfilAkun
         else
           row flex-wrap="wrap" gap=6 padding="0 16px"
             for l in laporan key=l.id
-              Petak(gambar=l.sampul, judul=l.judul, uji=`akun-${l.id}`)
+              Petak(gambar=l.sampul, judul=l.judul, uji=`akun-${l.id}`, penuh=false)
                 row align-items="center" gap=4
                   box width=6 height=6 border-radius=3
                     background-color=(l.status == "tayang" ? "status.sukses" : l.status == "ditolak" ? "status.bahaya" : "status.peringatan")
                   text statusLabel(l.status) font-size=9.5 font-weight=600 letter-spacing=0.4 color="media.teks"
       else if tab == "disukai"
-        KosongProfil(ikon="symbol:heart", pesan="Laporan yang kamu sukai di beranda tampil di sini.")
+        if disukai.length == 0 and memuatSuka
+          column padding=40 align-items="center"
+            progress aria-label="Memuat laporan yang disukai"
+        else if disukai.length == 0
+          KosongProfil(ikon="symbol:heart", pesan="Laporan yang kamu sukai di beranda tampil di sini.")
+        else
+          row flex-wrap="wrap" gap=6 padding="0 16px"
+            for l in disukai key=l.id
+              link href=path("laporan", l.id) width="calc((100% - 12px) / 3)" testId=`disukai-${l.id}`
+                Petak(gambar=l.sampulKecil, judul=l.judul, uji=`petak-suka-${l.id}`, penuh=true)
+                  row align-items="center" gap=4 font-size=10
+                    box color="aksen.isi"
+                      image "symbol:heart-fill"
+                    text hitung(max(l.suka, 1)) font-size=9.5 font-weight=600 color="media.teks"
       else if tersimpan.length == 0
         KosongProfil(ikon="symbol:icon.simpan", pesan="Laporan yang kamu simpan tampil di sini. Daftarnya hanya ada di HP ini.")
       else
         row flex-wrap="wrap" gap=6 padding="0 16px"
           for l in tersimpan key=l.id
             link href=path("laporan", l.id) width="calc((100% - 12px) / 3)" testId=`tersimpan-${l.id}`
-              Petak(gambar=l.sampulKecil, judul=l.judul, uji=`petak-${l.id}`)
+              Petak(gambar=l.sampulKecil, judul=l.judul, uji=`petak-${l.id}`, penuh=true)
                 row align-items="center" gap=4 font-size=10
                   box color="aksen.isi"
                     image "symbol:heart"
                   text hitung(l.suka) font-size=9.5 font-weight=600 color="media.teks"
 
-// Petak kisi profil: 3 kolom, rasio 3:4, sudut 14, pil keterangan di kiri bawah.
+// Petak kisi profil: 3 kolom, rasio 3:4, sudut 14, pil keterangan di kiri bawah. `penuh`: di dalam tautan yang
+// sudah selebar satu kolom.
 component Petak
   props
     gambar: string
     judul: string
     uji: string
+    penuh: bool
   slot
   view
-    box position="relative" width="calc((100% - 12px) / 3)" aspect-ratio="3 / 4" border-radius=14 overflow="hidden"
+    box position="relative" width=(penuh ? "100%" : "calc((100% - 12px) / 3)") aspect-ratio="3 / 4" border-radius=14 overflow="hidden"
       background-color="latar.redup" testId=uji
       if gambar != ""
         image gambar alt=judul position="absolute" inset=0 width="100%" height="100%" object-fit="cover"
@@ -1568,10 +1755,25 @@ component HalamanKomentar
 component HalamanFoto
   props
     gambar: string
+    video: string
     kembali: action
+  state jeda = false
+  action gantiJeda
+    jeda = not jeda
   view
     column flex=1 min-height=0 position="relative" background-color="media.tinta"
-      image gambar alt="Foto laporan" flex=1 min-height=0 width="100%" object-fit="contain"
+      if video != ""
+        video-putar sumber=video bisu=false putar=(not jeda) pas="contain" flex=1 min-height=0 width="100%"
+          aria-label="Video laporan" testId="video-penuh"
+        button press=gantiJeda aria-label=(jeda ? "Putar video" : "Jeda video") testId="video-penuh-ketuk"
+          position="absolute" inset=0 padding=0 display="flex" align-items="center" justify-content="center"
+          background-color="transparent"
+          if jeda
+            box width=64 height=64 border-radius=32 display="flex" align-items="center" justify-content="center"
+              background-color="media.teks" color="media.tinta" font-size=28
+              image "symbol:play-fill"
+      else
+        image gambar alt="Foto laporan" flex=1 min-height=0 width="100%" object-fit="contain"
       button press=kembali aria-label="Tutup layar penuh" testId="tutup-foto" position="absolute" top=8 right=12
         width=44 height=44 border-radius=22 display="flex" align-items="center" justify-content="center"
         background-color="media.kaca" color="media.teks" font-size=19 padding=0

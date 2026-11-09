@@ -1,13 +1,18 @@
 //! Umpan laporan terverifikasi (`GET {SITUS}/api/umpan?bahasa=id`) dan komentarnya
 //! (`GET {SITUS}/api/laporan/{id}/komentar`), dengan aturan klien laporin-apps: lewati laporan tanpa
-//! id angka, judul, koordinat sah (bukan 0,0) atau larik media.
+//! id angka, judul, koordinat sah (bukan 0,0) atau larik media. `SITUS` adalah `LAPORIN_SITUS` saat build
+//! (bawaan: mock-server, yang meneruskan produksi dan menambahkan suka & komentar mock).
 
 use serde_json::Value as Json;
 
 use crate::shapes::{Komentar, Laporan, Pulau, Sumber, Umpan};
 use crate::teks;
 
-pub const SITUS: &str = "https://fire.nusantara.earth";
+pub const SITUS: &str = env!("LAPORIN_SITUS");
+
+/// Video diputar MediaPlayer Android langsung dari produksi: tumpukan jaringan Android menolak HTTP polos
+/// (mock-server lewat `adb reverse`), dan mock hanya meneruskan berkas yang sama.
+pub const MEDIA: &str = "https://fire.nusantara.earth";
 
 /// Gambar yang diperkecil server Next.js. Tanpa `image/webp` di Accept ia membalas JPEG, yang bisa
 /// didekode Exact (JPEG dan PNG saja; WebP tidak).
@@ -46,16 +51,21 @@ fn laporan(j: &Json) -> Option<Laporan> {
     let lokasi = teks_atau(j, "lokasi", "");
     // Tempat singkat di meta kartu kisi: bagian pertama `lokasi` (desa), atau tempat bila tak ada.
     let desa = lokasi.split(',').next().map(str::trim).filter(|d| !d.is_empty()).unwrap_or(tempat);
-    // Semua foto untuk penggeser media di Detail: gambar, atau poster video.
-    let galeri: Vec<String> = media
+    // Semua media untuk penggeser di Detail: gambarnya (poster bila video) dan, sejajar, alamat videonya
+    // ("" untuk foto). Media tanpa gambar dilewati.
+    let (galeri, galeri_video): (Vec<String>, Vec<String>) = media
         .iter()
-        .map(|m| match m.get("jenis").and_then(Json::as_str) {
-            Some("video") => teks_atau(m, "poster", ""),
-            _ => teks_atau(m, "url", ""),
+        .filter_map(|m| {
+            let video = m.get("jenis").and_then(Json::as_str) == Some("video");
+            let gambar_m = if video { teks_atau(m, "poster", "") } else { teks_atau(m, "url", "") };
+            if gambar_m.is_empty() {
+                return None;
+            }
+            let alamat = if video { teks_atau(m, "url", "") } else { "" };
+            let alamat = if alamat.is_empty() { String::new() } else { format!("{MEDIA}{alamat}") };
+            Some((gambar(gambar_m, 1200), alamat))
         })
-        .filter(|p| !p.is_empty())
-        .map(|p| gambar(p, 1200))
-        .collect();
+        .unzip();
     let (lintang, bujur) = teks::koordinat(lat, lng);
     Some(Laporan {
         id: id.to_string(),
@@ -78,6 +88,7 @@ fn laporan(j: &Json) -> Option<Laporan> {
         inisial: teks::inisial(kredit),
         jumlah_kredit: 0.0,
         galeri,
+        galeri_video,
         jumlah_media: media.len() as f64,
         ada_video: media.iter().any(|m| m.get("jenis").and_then(Json::as_str) == Some("video")),
         vertikal: j.get("vertikal").and_then(Json::as_bool).unwrap_or(false),
@@ -178,6 +189,7 @@ mod uji {
         assert_eq!(l.tanggal_pendek, "4 NOV");
         assert_eq!(l.desa, "Handiwung");
         assert_eq!(l.galeri.len(), 2);
+        assert_eq!(l.galeri_video, [format!("{MEDIA}/media/video/a.mov"), String::new()]);
         assert_eq!(l.jumlah_kredit, 1.0);
         assert_eq!(u.laporan[1].desa, "Sumatra");
         // Tanpa provinsi: tempat = pulau; tanpa media: kredit bawaan, tanpa sampul.
