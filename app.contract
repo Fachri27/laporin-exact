@@ -98,6 +98,7 @@ shape LaporanSaya
   status: string
   dibuat: string
   lampiran: number
+  anonim: bool
 
 shape Balasan
   ok: bool
@@ -107,6 +108,7 @@ fn hitung(n: number): string = n >= 1000 ? `${(n / 1000).toFixed(1).replaceAll("
 fn ribuan(n: number): string = n >= 1000 ? `${floor(n / 1000)}.${(n % 1000 + 1000).toString().slice(1)}` : n.toString()
 fn labelUrut(u: string): string = u == "komentar" ? "Paling dikomentari" : u == "suka" ? "Paling disukai" : "Terbaru"
 fn cocok(l: Laporan, q: string): bool = l.judul.toLowerCase().includes(q.trim().toLowerCase()) or l.lokasi.toLowerCase().includes(q.trim().toLowerCase()) or l.tempat.toLowerCase().includes(q.trim().toLowerCase())
+fn pengirimLabel(s: LaporanSaya): string = s.anonim ? "Dikirim sebagai anonim" : s.pengirim == "" ? "Dikirim tanpa nama" : `Dikirim sebagai ${s.pengirim}`
 fn statusLabel(s: string): string = s == "tayang" ? "TERVERIFIKASI" : s == "ditolak" ? "DITOLAK" : "SEDANG DITINJAU"
 
 component Laporin
@@ -687,7 +689,7 @@ component HalamanProfil
           background-color="chip.aktif" color="chip.di-aktif"
           text "PT" font-size=32 font-weight=700
         text "Pelapor tamu" font-size=24 line-height=1.21 font-weight=700 letter-spacing=-0.4 margin-top=14
-        text "Laporan disimpan di HP ini oleh inti Rust" font-size=13 color="teks.redup" margin-top=8 text-align="center"
+        text "Salinan laporan yang terkirim ke server" font-size=13 color="teks.redup" margin-top=8 text-align="center"
       row margin="0 20px" border-top="1px solid garis.tipis" border-bottom="1px solid garis.tipis"
         Statistik(label="Laporan", nilai=saya.length, garis=false)
         Statistik(label="Ditinjau", nilai=ditinjau, garis=true)
@@ -715,7 +717,7 @@ component HalamanProfil
             text s.dibuat font-size=10 font-weight=500 letter-spacing=0.4 color="teks.redup"
           text s.judul font-size=16 line-height=1.25 font-weight=700
           text s.deskripsi font-size=13.5 line-height=1.48 color="teks.redup" line-clamp=2
-          text `${s.pengirim == "" ? "Dikirim sebagai anonim" : `Dikirim sebagai ${s.pengirim}`}${s.lampiran > 0 ? ` · ${s.lampiran} foto` : ""}` font-size=12
+          text `${pengirimLabel(s)}${s.lampiran > 0 ? ` · ${s.lampiran} foto` : ""}` font-size=12
             font-weight=500 color="teks.redup"
 
 component Statistik

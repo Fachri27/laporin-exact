@@ -51,12 +51,15 @@ pub fn baca_balasan(outcome: Outcome) -> Result<Balasan, String> {
 }
 
 /// Catatan baru di depan daftar (terbaru dulu). `id` dari waktu kirim, unik per milidetik.
-pub fn catatan(judul: &str, deskripsi: &str, nama: &str, epoch_ms: f64, selisih_menit: f64) -> Json {
+/// `anonim` dibedakan dari nama yang dikosongkan: keduanya tanpa `pengirim`, tetapi hanya anonim yang
+/// meminta server tidak mengaitkan laporan ke siapa pun.
+pub fn catatan(judul: &str, deskripsi: &str, nama: &str, anonim: bool, epoch_ms: f64, selisih_menit: f64) -> Json {
     json!({
         "id": format!("{}", epoch_ms.round() as i64),
         "judul": judul,
         "deskripsi": deskripsi,
         "pengirim": nama,
+        "anonim": anonim,
         "status": "menunggu",
         "dibuat": teks::waktu_singkat(epoch_ms, selisih_menit),
     })
@@ -74,6 +77,7 @@ pub fn ke_laporan(semua: &[Json]) -> Vec<LaporanSaya> {
             status: teks_di(j, "status"),
             dibuat: teks_di(j, "dibuat"),
             lampiran: j.get("lampiran").and_then(Json::as_f64).unwrap_or(0.0),
+            anonim: j.get("anonim").and_then(Json::as_bool).unwrap_or(false),
         })
         .filter(|l| !l.id.is_empty())
         .collect()

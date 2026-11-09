@@ -200,7 +200,7 @@ impl Kiriman {
             Tahap::BacaSaya => match simpan::baca_balasan(outcome) {
                 Ok(simpan::Balasan::Isi(mut semua)) => {
                     let i = &self.isian;
-                    let mut catatan = simpan::catatan(&i.judul, &i.deskripsi, &i.nama, i.epoch_ms, i.selisih_menit);
+                    let mut catatan = simpan::catatan(&i.judul, &i.deskripsi, &i.nama, i.anonim, i.epoch_ms, i.selisih_menit);
                     catatan["lampiran"] = json!(self.berkas.len());
                     semua.insert(0, catatan);
                     self.tahap = Tahap::TulisSaya;
