@@ -67,6 +67,18 @@ pub fn jam_wib(iso: &str) -> String {
     jam().unwrap_or_default()
 }
 
+/// "2026-11-09T17:51:07.191Z" → "10 Nov 2026, 00.51" (WIB, UTC+7); teks lain dikembalikan apa adanya.
+pub fn waktu_iso_wib(iso: &str) -> String {
+    let waktu = || -> Option<String> {
+        let (t, b, d) = pecah_iso_tanggal(iso)?;
+        let j: i64 = iso.get(11..13)?.parse().ok()?;
+        let m: i64 = iso.get(14..16)?.parse().ok()?;
+        let menit = hari_dari(t, b, d) * 1440 + j * 60 + m;
+        Some(waktu_singkat((menit * 60_000) as f64, 420.0))
+    };
+    waktu().unwrap_or_else(|| iso.to_string())
+}
+
 /// "4 November 2026" → "4 NOV".
 pub fn tanggal_pendek(tanggal: &str) -> String {
     let mut kata = tanggal.split_whitespace();
@@ -146,6 +158,7 @@ mod uji {
         assert_eq!(jam_wib("2026-11-09T14:14:00.000Z"), "21.14 WIB");
         assert_eq!(jam_wib("2026-11-09T20:05:00.000Z"), "03.05 WIB");
         assert_eq!(tanggal_pendek("4 November 2026"), "4 NOV");
+        assert_eq!(waktu_iso_wib("2026-11-09T17:51:07.191Z"), "10 Nov 2026, 00.51");
     }
 
     #[test]

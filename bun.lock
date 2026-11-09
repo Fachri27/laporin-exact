@@ -6,10 +6,13 @@
       "name": "laporin-exact",
       "dependencies": {
         "@exact/photos": "file:../exact/packages/photos",
+        "@laporin/web": "file:./paket/web",
       },
     },
   },
   "packages": {
     "@exact/photos": ["@exact/photos@file:../exact/packages/photos", {}],
+
+    "@laporin/web": ["@laporin/web@file:paket/web", {}],
   }
 }

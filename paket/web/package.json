@@ -1,0 +1,10 @@
+{
+  "name": "@laporin/web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Halaman web di dalam aplikasi (WebView Android), untuk peta laporin.app.",
+  "exports": {
+    ".": "./exact.json",
+    "./android": "./android/exact.json"
+  }
+}

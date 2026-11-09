@@ -29,3 +29,9 @@ test "umpan yang gagal dimuat menawarkan coba lagi"
   fail fetch "https://fire.nusantara.earth"
   clock data
   expect tree has "coba-lagi"
+
+test "tamu melihat panel Masuk uji di Profil"
+  tap "tab-profil"
+  clock settle
+  expect tree has "panel-masuk"
+  expect tree has "masuk-uji"

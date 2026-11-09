@@ -31,6 +31,16 @@ Foto dipilih dari galeri lewat `@exact/photos`. Dialog izinnya muncul saat formu
 `limit` baru di `bukaLapor`, karena bacaan saat boot mendahului terikatnya modul foto native dan tertahan
 (Exact pre-1.0).
 
+## Masuk uji dan peta
+
+- **Masuk uji** (Profil): `POST /api/mobile/masuk/uji` ke mock-server; sesi `{token, nama, email}` disimpan inti
+  Rust di rahasia aplikasi (`secret.keep sesi-laporin`). Setelah masuk, Profil membaca `/api/mobile/saya` dan
+  `/saya/laporan`, dan Lapor mengirim dengan Bearer token tanpa captcha (kecuali anonim).
+- **Peta**: halaman `https://laporin.app/id/embed` di WebView, lewat paket lokal `paket/web` (tag `web-halaman`,
+  Kotlin `paket/web/android/Web.kt`). Chip *Ringkasan hotspot* tetap menampilkan olahan Rust dari geoplatform.
+- Setelah mengubah `paket/` atau `node_modules`, hapus `target/android` sebelum `bun exact.mjs android`: build
+  APK tidak melihat perubahan di sana.
+
 ## Menjalankan
 
 ```sh

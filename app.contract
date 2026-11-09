@@ -2,7 +2,8 @@
 // Setiap sumber data di bawah dijawab oleh data/src/lib.rs: umpan & komentar dari
 // fire.nusantara.earth, hotspot dari geoplatform.nusantara.earth, laporan dikirim ke server
 // laporan (LAPORIN_API, mock-server laporin-apps) dan salinannya di app:/data. Foto bukti dari
-// galeri lewat @exact/photos.
+// galeri lewat @exact/photos. Akun Masuk uji dan "Laporan saya" dari server laporan; peta dari laporin.app
+// (WebView, paket lokal paket/web).
 
 use photoAssets, photoLibraryStatus, copyPhotoAsset, PhotoAssetList, PhotoLibraryStatus, PhotoCopy from "@exact/photos"
 
@@ -100,6 +101,23 @@ shape LaporanSaya
   lampiran: number
   anonim: bool
 
+shape Sesi
+  masuk: bool
+  nama: string
+  inisial: string
+  email: string
+  laporan: number
+  tayang: number
+  disukai: number
+
+shape LaporanAkun
+  id: string
+  judul: string
+  status: string
+  dibuat: string
+  sampul: string
+  berkas: number
+
 shape Balasan
   ok: bool
   galat: string
@@ -126,6 +144,9 @@ component Laporin
   // Galeri dibaca dengan limit baru saat formulir dibuka: bacaan saat boot mendahului terikatnya modul foto
   // native dan tertahan di tiket izin pengganti (Exact pre-1.0), jadi argumen baru meminta lagi ke modulnya.
   state batasGaleri = 1
+  state namaUji = ""
+  state modePeta = "web"
+  state statusPeta = ""
   state menyalin = ""
   resource waktu = exactTime() as shape Waktu
   resource umpan = muatUmpan() as shape Umpan else empty()
@@ -133,7 +154,12 @@ component Laporin
   resource saya = muatLaporanSaya() as shape LaporanSaya[] else empty()
   derive idTerbuka = top(nav).name == "laporan" ? top(nav).params.id : ""
   resource komentar = muatKomentar(idTerbuka) as shape Komentar[] else empty()
-  mutation terkirim as shape Balasan refreshes saya then setelahKirim
+  mutation terkirim as shape Balasan refreshes saya, laporanAkun, sesi then setelahKirim
+  resource sesi = muatSesi() as shape Sesi else empty()
+  resource laporanAkun = muatLaporanAkun() as shape LaporanAkun[] else empty()
+  mutation masuk as shape Balasan refreshes sesi, laporanAkun then setelahMasuk
+  mutation keluarSesi as shape Balasan refreshes sesi, laporanAkun
+  derive galatMasuk = match masuk { case some(b) => b.galat, case none => "" }
   resource statusFoto = photoLibraryStatus() as shape PhotoLibraryStatus else empty()
   resource galeri = photoAssets(limit=batasGaleri) as shape PhotoAssetList else empty()
   mutation salinan as shape PhotoCopy then setelahSalin
@@ -200,6 +226,24 @@ component Laporin
       case none
         galat = "Foto tidak bisa disalin. Coba pilih lagi."
     menyalin = ""
+  action pilihModePeta(m: string)
+    modePeta = m
+  action pesanPeta(v: string)
+    statusPeta = v
+  action ubahNamaUji(v: string)
+    namaUji = v
+  action tekanMasuk
+    if not pending(masuk)
+      send masuk = masukUji(namaUji.trim())
+  action masukSebagai(n: string)
+    namaUji = n
+    if not pending(masuk)
+      send masuk = masukUji(n)
+  action setelahMasuk
+    if galatMasuk == ""
+      namaUji = ""
+  action tekanKeluar
+    send keluarSesi = keluar()
   action liveBelum
     showModal("live-belum")
   action kirim
@@ -243,14 +287,34 @@ component Laporin
                       Beranda(umpan=umpan, tampil=tampil, kisi=kisi, idSorotan=idSorotan, pulau=pulau, urutan=urutan,
                         memuat=pending(umpan), gagal=failed(umpan), pilihPulau=pilihPulau, urutkan=urutkan, muatUlang=muatUlang)
                 else if e.name == "peta"
-                  scroll id=`isi-${e.id}` flex=1 min-height=0
-                    HalamanHotspot(h=hotspot, memuat=pending(hotspot), gagal=failed(hotspot), muatUlang=muatUlangHotspot)
+                  // Peta laporin.app dibiarkan terpasang (display none) saat Ringkasan dipilih, supaya tidak dimuat ulang.
+                  column flex=1 min-height=0
+                    row gap=6 padding="6px 16px 10px" align-items="center"
+                      Chip(label="Peta", aktif=(modePeta == "web"), pilih=pilihModePeta("web"), uji="mode-peta")
+                      Chip(label="Ringkasan hotspot", aktif=(modePeta == "ringkasan"), pilih=pilihModePeta("ringkasan"),
+                        uji="mode-ringkasan")
+                    if modePeta == "web" and statusPeta.startsWith("galat")
+                      text "Peta laporin.app gagal dimuat. Periksa koneksi, atau lihat Ringkasan hotspot." font-size=12.5
+                        color="status.bahaya" padding="0 20px 8px" testId="peta-galat"
+                    column flex=1 min-height=0 display=(modePeta == "web" ? "flex" : "none")
+                      padding-bottom="calc(env(safe-area-inset-bottom) + 88px)"
+                      web-halaman alamat="https://laporin.app/id/embed" message=pesanPeta flex=1 min-height=0
+                        aria-label="Peta kebakaran laporin.app" testId="peta-web"
+                    if modePeta == "ringkasan"
+                      scroll id=`isi-${e.id}` flex=1 min-height=0
+                        HalamanHotspot(h=hotspot, memuat=pending(hotspot), gagal=failed(hotspot), muatUlang=muatUlangHotspot)
                 else if e.name == "siaran"
                   scroll id=`isi-${e.id}` flex=1 min-height=0
                     HalamanSiaran(mulai=liveBelum)
                 else if e.name == "profil"
                   scroll id=`isi-${e.id}` flex=1 min-height=0
-                    HalamanProfil(saya=saya, ditinjau=ditinjau, buatLaporan=bukaLapor)
+                    if sesi.masuk
+                      ProfilAkun(sesi=sesi, laporan=laporanAkun, memuat=pending(laporanAkun), gagal=failed(laporanAkun),
+                        keluar=tekanKeluar, buatLaporan=bukaLapor)
+                    else
+                      HalamanProfil(saya=saya, ditinjau=ditinjau, buatLaporan=bukaLapor, namaUji=namaUji,
+                        ubahNamaUji=ubahNamaUji, masuk=tekanMasuk, masukSebagai=masukSebagai, memuatMasuk=pending(masuk),
+                        galatMasuk=galatMasuk)
                 else if e.name == "laporan"
                   scroll id=`isi-${e.id}` flex=1 min-height=0
                     for lap in umpan.laporan.filter(x => x.id == e.params.id) key=lap.id
@@ -264,6 +328,7 @@ component Laporin
                   FormLapor(judul=judul, deskripsi=deskripsi, nama=nama, anonim=anonim, galat=galat, mengirim=pending(terkirim),
                     galeri=galeri, statusFoto=statusFoto, memuatGaleri=pending(galeri), pilihan=pilihan,
                     menyalin=pending(salinan), pilihFoto=pilihFoto, muatUlangGaleri=muatUlangGaleri,
+                    akun=(sesi.masuk ? sesi.nama : ""),
                     ubahJudul=ubahJudul, ubahDeskripsi=ubahDeskripsi, ubahNama=ubahNama, ubahAnonim=ubahAnonim,
                     kirim=kirim, kembali=back, idIsi=`isi-${e.id}`)
                 else if e.name == "terkirim"
@@ -678,6 +743,12 @@ component HalamanProfil
     saya: LaporanSaya[]
     ditinjau: number
     buatLaporan: action
+    namaUji: string
+    ubahNamaUji: action
+    masuk: action
+    masukSebagai: action
+    memuatMasuk: bool
+    galatMasuk: string
   view
     column padding-bottom=120
       row min-height=64 padding="0 16px 0 20px" align-items="center" justify-content="space-between"
@@ -690,12 +761,35 @@ component HalamanProfil
           text "PT" font-size=32 font-weight=700
         text "Pelapor tamu" font-size=24 line-height=1.21 font-weight=700 letter-spacing=-0.4 margin-top=14
         text "Salinan laporan yang terkirim ke server" font-size=13 color="teks.redup" margin-top=8 text-align="center"
+      // Panel masuk (PanelMasuk laporin-apps), di sini hanya Masuk uji ke mock-server.
+      column margin="0 16px 20px" padding="20px 18px" gap=12 border-radius=28 background-color="latar.permukaan"
+        testId="panel-masuk"
+        text "MASUK UJI · MOCK-SERVER" font-size=11 font-weight=600 letter-spacing=0.8 color="aksen.teks"
+        text "Masuk ke Laporin" font-size=22 line-height=1.23 font-weight=700
+        text "Pantau status laporanmu dari server dan kirim tanpa captcha. Akun uji dibuat mock-server laporin-apps."
+          font-size=13.5 line-height=1.48 color="teks.redup"
+        row gap=8 flex-wrap="wrap"
+          for n in ["Budi Santoso", "Siti Rahma"] key=n
+            button press=masukSebagai(n) disabled=memuatMasuk testId=`masuk-${n}` height=36 padding="0 14px"
+              border-radius=18 border="1px solid garis.tegas" display="flex" align-items="center" gap=6 font-size=14
+              image "symbol:person"
+              text n font-size=13 font-weight=600
+        row gap=8 align-items="center"
+          column flex=1 min-width=0 padding="8px 14px" border-radius=16 background-color="latar.halaman"
+            input value=namaUji input=ubahNamaUji submit=masuk placeholder="Nama lain" aria-label="Nama penguji"
+              maxlength=100 testId="nama-uji" border="none" background-color="transparent" font-size=15
+              color="teks.utama"
+          button press=masuk disabled=memuatMasuk testId="masuk-uji" height=48 padding="0 18px" border-radius=24
+            background-color="aksen.isi" color="aksen.di" display="flex" align-items="center"
+            text (memuatMasuk ? "MASUK…" : "MASUK UJI") font-size=14 font-weight=700 letter-spacing=0.4
+        if galatMasuk != "" and not memuatMasuk
+          text galatMasuk font-size=12.5 line-height=1.4 color="status.bahaya" testId="galat-masuk"
       row margin="0 20px" border-top="1px solid garis.tipis" border-bottom="1px solid garis.tipis"
         Statistik(label="Laporan", nilai=saya.length, garis=false)
         Statistik(label="Ditinjau", nilai=ditinjau, garis=true)
         Statistik(label="Tayang", nilai=saya.filter(s => s.status == "tayang").length, garis=true)
       row padding="14px 16px 12px" margin-bottom=12 border-bottom="1px solid garis.tipis"
-        text "LAPORAN SAYA" font-size=11 font-weight=600 letter-spacing=0.7 padding="10px 14px" border-radius=18
+        text "LAPORAN DI HP INI" font-size=11 font-weight=600 letter-spacing=0.7 padding="10px 14px" border-radius=18
           background-color="chip.aktif" color="chip.di-aktif"
       if saya.length == 0
         column align-items="center" gap=10 padding="40px 28px"
@@ -719,6 +813,70 @@ component HalamanProfil
           text s.deskripsi font-size=13.5 line-height=1.48 color="teks.redup" line-clamp=2
           text `${pengirimLabel(s)}${s.lampiran > 0 ? ` · ${s.lampiran} foto` : ""}` font-size=12
             font-weight=500 color="teks.redup"
+
+component ProfilAkun
+  props
+    sesi: Sesi
+    laporan: LaporanAkun[]
+    memuat: bool
+    gagal: bool
+    keluar: action
+    buatLaporan: action
+  view
+    column padding-bottom=120
+      row min-height=64 padding="0 16px 0 20px" align-items="center" justify-content="space-between"
+        row align-items="baseline"
+          text "LAPORIN" font-size=21 line-height=1.24 font-weight=700
+          text "." font-size=21 line-height=1.24 font-weight=700 color="aksen.isi"
+        button press=keluar testId="keluar" height=34 padding="0 14px" border-radius=17 border="1px solid garis.tegas"
+          display="flex" align-items="center" gap=6 font-size=15
+          image "symbol:sign-out"
+          text "Keluar" font-size=13 font-weight=600
+      column align-items="center" padding="5px 28px 20px"
+        box width=96 height=96 border-radius=48 display="flex" align-items="center" justify-content="center"
+          background-color="chip.aktif" color="chip.di-aktif"
+          text sesi.inisial font-size=32 font-weight=700
+        text sesi.nama font-size=24 line-height=1.21 font-weight=700 letter-spacing=-0.4 margin-top=14 testId="nama-akun"
+        text "MASUK UJI" font-size=9.5 font-weight=600 letter-spacing=0.6 padding="3px 6px" border-radius=4
+          border="1px solid garis.tegas" margin-top=8
+        if sesi.email != ""
+          text sesi.email font-size=13 color="teks.redup" margin-top=8
+      row margin="0 20px" border-top="1px solid garis.tipis" border-bottom="1px solid garis.tipis"
+        Statistik(label="Laporan", nilai=sesi.laporan, garis=false)
+        Statistik(label="Tayang", nilai=sesi.tayang, garis=true)
+        Statistik(label="Disukai", nilai=sesi.disukai, garis=true)
+      row padding="14px 16px 12px" margin-bottom=12 border-bottom="1px solid garis.tipis"
+        text "LAPORAN SAYA" font-size=11 font-weight=600 letter-spacing=0.7 padding="10px 14px" border-radius=18
+          background-color="chip.aktif" color="chip.di-aktif"
+      if gagal and laporan.length == 0
+        Kosong(ikon="symbol:icon.luring", pesan="Gagal memuat laporan dari server. Periksa koneksi lalu coba lagi.")
+      else if memuat and laporan.length == 0
+        column padding=40 align-items="center"
+          progress aria-label="Memuat laporan saya"
+      else if laporan.length == 0
+        column align-items="center" gap=10 padding="40px 28px"
+          box width=56 height=56 border-radius=28 display="flex" align-items="center" justify-content="center"
+            background-color="latar.redup" font-size=24
+            image "symbol:camera"
+          text "Laporanmu tampil di sini beserta status verifikasinya." font-size=13.5 line-height=1.48
+            color="teks.redup" text-align="center" testId="akun-kosong"
+          button press=buatLaporan testId="akun-buat-laporan" margin-top=6 height=48 padding="0 22px" border-radius=24
+            background-color="aksen.isi" color="aksen.di" display="flex" align-items="center" gap=8 font-size=18
+            image "symbol:add"
+            text "BUAT LAPORAN" font-size=15 font-weight=700 letter-spacing=0.4
+      for l in laporan key=l.id
+        row margin="0 16px 10px" padding=10 gap=12 border-radius=20 background-color="latar.permukaan"
+          align-items="center" testId=`akun-${l.id}`
+          box width=72 height=72 border-radius=14 overflow="hidden" background-color="latar.redup" flex-shrink=0
+            if l.sampul != ""
+              image l.sampul alt=l.judul width="100%" height="100%" object-fit="cover"
+          column flex=1 min-width=0 gap=4
+            row align-items="center" gap=6
+              box width=7 height=7 border-radius=4
+                background-color=(l.status == "tayang" ? "status.sukses" : l.status == "ditolak" ? "status.bahaya" : "status.peringatan")
+              text statusLabel(l.status) font-size=10 font-weight=600 letter-spacing=0.5 color="teks.redup"
+            text l.judul font-size=15 line-height=1.27 font-weight=700 line-clamp=2
+            text `${l.dibuat} · ${l.berkas} berkas` font-size=11 font-weight=500 color="teks.redup"
 
 component Statistik
   props
@@ -800,6 +958,7 @@ component FormLapor
     menyalin: bool
     pilihFoto: action
     muatUlangGaleri: action
+    akun: string
     ubahJudul: action
     ubahDeskripsi: action
     ubahNama: action
@@ -820,7 +979,7 @@ component FormLapor
           row gap=10 padding=14 border-radius=16 background-color="aksen.lembut" align-items="flex-start"
             color="aksen.teks" font-size=17
             image "symbol:info"
-            text "Laporan dikirim inti Rust ke mock-server laporin-apps (port 4000); salinannya tampil di Profil."
+            text (akun != "" ? `Masuk sebagai ${akun}: dikirim inti Rust ke mock-server laporin-apps tanpa captcha.` : "Laporan dikirim inti Rust ke mock-server laporin-apps (port 4000); salinannya tampil di Profil.")
               font-size=12.5 line-height=1.44 flex=1 min-width=0
           Isian(label="Judul singkat", petunjuk="")
             input value=judul input=ubahJudul placeholder="Mis. “Asap tebal di tepi jalan Trans-Kalimantan”"
@@ -870,9 +1029,10 @@ component FormLapor
             image "symbol:icon.anonim"
             column flex=1 min-width=0 gap=2
               text "Kirim sebagai anonim" font-size=14 font-weight=700
-              text (anonim ? "Nama tidak ditampilkan" : "Nama boleh dikosongkan") font-size=12 color="teks.redup"
+              text (anonim ? (akun != "" ? "Tidak tersimpan di Laporan saya" : "Nama tidak ditampilkan") : akun != "" ? `Sebagai ${akun}` : "Nama boleh dikosongkan")
+                font-size=12 color="teks.redup"
             input type="checkbox" switch checked=anonim change=ubahAnonim aria-label="Kirim sebagai anonim" testId="anonim"
-          if not anonim
+          if not anonim and akun == ""
             Isian(label="Nama (opsional)", petunjuk="")
               input value=nama input=ubahNama placeholder="Nama pelapor" aria-label="Nama pelapor" maxlength=100
                 testId="nama" border="none" background-color="transparent" font-size=15 font-weight=500 color="teks.utama"

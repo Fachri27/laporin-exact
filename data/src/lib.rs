@@ -9,8 +9,11 @@
 //! | `muatKomentar(id)` | GET fire.nusantara.earth/api/laporan/{id}/komentar | `umpan::olah_komentar` |
 //! | `muatHotspot()` | GET geoplatform.nusantara.earth/api/hotspot | `hotspot::olah_hotspot` |
 //! | `muatLaporanSaya()` | baca app:/data/laporan-saya.json | `simpan::ke_laporan` |
+//! | `muatSesi()`, `muatLaporanAkun()` | GET /api/mobile/saya, /saya/laporan dengan sesi di `Store` (`akun`) |
+//! | `masukUji(nama)`, `keluar()` | POST /api/mobile/masuk/uji, /keluar | balasan `{ ok, galat }` |
 //! | `kirimLaporan(…)` | tiket, perkecil & baca foto, POST multipart ke `LAPORIN_API` (`kirim`) | balasan `{ ok, galat }` |
 
+pub mod akun;
 pub mod hotspot;
 pub mod kirim;
 mod shapes;
@@ -21,7 +24,7 @@ pub mod umpan;
 use exact_runner::failure::FailureCode;
 use exact_runner::{Answer, DataError, DataSource, FailureKind, Outcome, Request, Store, Value};
 
-use shapes::{Balasan, ContractValue, Komentar, LaporanSaya};
+use shapes::{Balasan, ContractValue, Komentar, LaporanAkun, LaporanSaya, Sesi};
 
 /// Batas balasan HTTP: umpan ±160 laporan dan hotspot hari puncak (puluhan ribu baris) muat.
 const BATAS_BALASAN: u32 = 16 << 20;
@@ -102,7 +105,8 @@ impl DataSource for Laporin {
             "fs.read app:/data/laporan-saya.json\n",
             "fs.write app:/data/laporan-saya.json\n",
             "fs.read app:/tmp\n",
-            "fs.write app:/tmp"
+            "fs.write app:/tmp\n",
+            "secret.keep sesi-laporin"
         )
     }
 
@@ -110,6 +114,10 @@ impl DataSource for Laporin {
     fn query(&mut self, source: &str, args: &[Value]) -> Result<Value, DataError> {
         match source {
             "muatKomentar" if teks_arg(args, 0)?.is_empty() => Ok(Vec::<Komentar>::new().to_value()),
+            // Bingkai pertama sebagai tamu; sesi tersimpan dibaca saat berjalan.
+            "muatSesi" => Ok(Sesi::default().to_value()),
+            "muatLaporanAkun" => Ok(Vec::<LaporanAkun>::new().to_value()),
+            "masukUji" | "keluar" => Err(DataError::Unavailable("dijawab saat berjalan".into())),
             "muatUmpan" | "muatHotspot" | "muatKomentar" | "muatLaporanSaya" | "kirimLaporan" => {
                 Err(DataError::Unavailable("dijawab saat berjalan".into()))
             }
@@ -117,7 +125,7 @@ impl DataSource for Laporin {
         }
     }
 
-    fn answer(&mut self, _store: &mut Store, source: &str, args: &[Value]) -> Result<Answer, DataError> {
+    fn answer(&mut self, store: &mut Store, source: &str, args: &[Value]) -> Result<Answer, DataError> {
         Ok(match source {
             "muatUmpan" => ambil(&format!("{}/api/umpan?bahasa=id", umpan::SITUS)),
             "muatHotspot" => ambil(&format!("{}/api/hotspot", hotspot::GEO)),
@@ -130,7 +138,23 @@ impl DataSource for Laporin {
                 }
             }
             "muatLaporanSaya" => Answer::Later(simpan::minta_baca()),
-            "kirimLaporan" => match kirim::Kiriman::mulai(isian(args)?) {
+            "muatSesi" => match akun::tersimpan(store) {
+                Some(s) => Answer::Later(akun::minta_profil(&s.token)),
+                None => Answer::Now(Sesi::default().to_value()),
+            },
+            "muatLaporanAkun" => match akun::tersimpan(store) {
+                Some(s) => Answer::Later(akun::minta_laporan(&s.token)),
+                None => Answer::Now(Vec::<LaporanAkun>::new().to_value()),
+            },
+            "masukUji" => {
+                let nama = teks_arg(args, 0)?.trim();
+                Answer::Later(akun::minta_masuk_uji(if nama.is_empty() { "Penguji" } else { nama }))
+            }
+            "keluar" => match akun::tersimpan(store) {
+                Some(s) => Answer::Later(akun::minta_keluar(&s.token)),
+                None => balasan(true, ""),
+            },
+            "kirimLaporan" => match kirim::Kiriman::mulai(isian(args)?, akun::tersimpan(store).map(|s| s.token)) {
                 Ok((kiriman, minta)) => {
                     self.kiriman = Some(kiriman);
                     Answer::Later(minta)
@@ -141,8 +165,22 @@ impl DataSource for Laporin {
         })
     }
 
-    fn parse(&mut self, _store: &mut Store, source: &str, _args: &[Value], outcome: Outcome) -> Result<Answer, DataError> {
+    fn parse(&mut self, store: &mut Store, source: &str, _args: &[Value], outcome: Outcome) -> Result<Answer, DataError> {
         match source {
+            "muatSesi" => Ok(Answer::Now(akun::sesi(store, &outcome).to_value())),
+            "muatLaporanAkun" => {
+                let daftar = akun::laporan(store, &outcome).map_err(|e| gagal(FailureCode::Offline, e))?;
+                Ok(Answer::Now(daftar.to_value()))
+            }
+            "masukUji" => Ok(match akun::simpan_masuk(store, &outcome) {
+                Ok(_) => balasan(true, ""),
+                Err(e) => balasan(false, &e),
+            }),
+            // Keluar di HP selalu berhasil; server yang tak terjangkau hanya tidak sempat mencabut tokennya.
+            "keluar" => {
+                akun::lupakan(store);
+                Ok(balasan(true, ""))
+            }
             "muatUmpan" => {
                 let u = umpan::olah_umpan(&badan(outcome)?).map_err(|e| gagal(FailureCode::Shape, e))?;
                 Ok(Answer::Now(u.to_value()))

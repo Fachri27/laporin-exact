@@ -4,6 +4,8 @@
 //!
 //! Rantainya, satu permintaan host per langkah (`answer` lalu `parse` berulang):
 //! tiket → (perkecil foto → baca foto) × n → unggah multipart → baca & tulis laporan-saya.json.
+//! Pengguna yang masuk (tidak anonim) mengirim dengan Bearer token tanpa tiket, seperti server menerima akun
+//! sebagai pengganti captcha; kiriman anonim tidak pernah membawa token.
 //! Foto diperkecil `fs.compressImage` (JPEG, sisi terpanjang 2048 px, ≤ 1,5 MB), yang juga membuang
 //! metadata EXIF dan GPS sebelum foto meninggalkan HP.
 
@@ -46,6 +48,7 @@ pub struct Kiriman {
     isian: Isian,
     tahap: Tahap,
     tiket: String,
+    token: Option<String>,
     berkas: Vec<Vec<u8>>,
 }
 
@@ -100,7 +103,7 @@ pub fn multipart(kolom: &[(&str, &str)], berkas: &[Vec<u8>]) -> (String, Vec<u8>
 
 impl Kiriman {
     /// Kiriman baru dan permintaan pertamanya (tiket captcha), atau penolakan isian langsung.
-    pub fn mulai(isian: Isian) -> Result<(Kiriman, Request), String> {
+    pub fn mulai(isian: Isian, token: Option<String>) -> Result<(Kiriman, Request), String> {
         if isian.judul.trim().is_empty() {
             return Err("Isi judul singkat dulu.".into());
         }
@@ -113,23 +116,36 @@ impl Kiriman {
         if isian.lampiran.len() > 6 {
             return Err("Maksimal 6 foto per laporan.".into());
         }
-        // Mock-server: halaman captcha-nya langsung lolos dengan token ini (laporin-apps mock-server/server.mjs).
-        let minta = Request::post_json(&format!("{API}/api/mobile/tiket"), r#"{"token":"mock-captcha"}"#).timeout(15_000);
-        Ok((Kiriman { isian, tahap: Tahap::Tiket, tiket: String::new(), berkas: Vec::new() }, minta))
+        let token = token.filter(|_| !isian.anonim);
+        let mut kiriman = Kiriman { isian, tahap: Tahap::Tiket, tiket: String::new(), token, berkas: Vec::new() };
+        let minta = if kiriman.token.is_some() {
+            kiriman.minta_perkecil(0)
+        } else {
+            // Mock-server: halaman captcha-nya langsung lolos dengan token ini (laporin-apps mock-server/server.mjs).
+            Request::post_json(&format!("{API}/api/mobile/tiket"), r#"{"token":"mock-captcha"}"#).timeout(15_000)
+        };
+        Ok((kiriman, minta))
+    }
+
+    fn minta_perkecil(&mut self, i: usize) -> Request {
+        self.tahap = Tahap::Perkecil(i);
+        exact_data::storage::request(
+            "fs.compressImage",
+            json!({ "path": self.isian.lampiran[i], "destination": sementara(i), "maxDimension": SISI_MAKS, "maxBytes": BITA_MAKS }),
+        )
     }
 
     fn perkecil(&mut self, i: usize) -> Langkah {
-        self.tahap = Tahap::Perkecil(i);
-        Langkah::Minta(exact_data::storage::request(
-            "fs.compressImage",
-            json!({ "path": self.isian.lampiran[i], "destination": sementara(i), "maxDimension": SISI_MAKS, "maxBytes": BITA_MAKS }),
-        ))
+        Langkah::Minta(self.minta_perkecil(i))
     }
 
     fn unggah(&mut self) -> Langkah {
         self.tahap = Tahap::Unggah;
         let i = &self.isian;
-        let mut kolom = vec![("judul", i.judul.as_str()), ("deskripsi", i.deskripsi.as_str()), ("tiket", self.tiket.as_str())];
+        let mut kolom = vec![("judul", i.judul.as_str()), ("deskripsi", i.deskripsi.as_str())];
+        if self.token.is_none() {
+            kolom.push(("tiket", self.tiket.as_str()));
+        }
         if i.anonim {
             kolom.push(("anonim", "1"));
         } else if !i.nama.is_empty() {
@@ -139,9 +155,11 @@ impl Kiriman {
         let minta = Request { method: "POST".into(), body, ..Request::get(&format!("{API}/api/mobile/laporan")) }
             .header("content-type", &jenis)
             .header("accept", "application/json")
-            .header("x-tiket-lapor", &self.tiket)
             .timeout(60_000);
-        Langkah::Minta(minta)
+        Langkah::Minta(match &self.token {
+            Some(token) => minta.header("authorization", &format!("Bearer {token}")),
+            None => minta.header("x-tiket-lapor", &self.tiket),
+        })
     }
 
     /// Olah balasan langkah yang sedang berjalan dan tentukan langkah berikutnya.
@@ -248,9 +266,19 @@ mod uji {
 
     #[test]
     fn isian_tanpa_foto_ditolak_sebelum_jaringan() {
-        assert_eq!(Kiriman::mulai(isian(0)).err().unwrap(), "Sertakan minimal satu foto sebagai bukti.");
-        assert_eq!(Kiriman::mulai(isian(7)).err().unwrap(), "Maksimal 6 foto per laporan.");
-        let (_, minta) = Kiriman::mulai(isian(1)).unwrap();
+        assert_eq!(Kiriman::mulai(isian(0), None).err().unwrap(), "Sertakan minimal satu foto sebagai bukti.");
+        assert_eq!(Kiriman::mulai(isian(7), None).err().unwrap(), "Maksimal 6 foto per laporan.");
+        let (_, minta) = Kiriman::mulai(isian(1), None).unwrap();
+        assert_eq!(minta.url, format!("{API}/api/mobile/tiket"));
+    }
+
+    #[test]
+    fn akun_melewati_tiket_kecuali_anonim() {
+        let (_, minta) = Kiriman::mulai(isian(1), Some("abc".into())).unwrap();
+        assert!(minta.storage.is_some(), "pengguna yang masuk langsung memperkecil foto");
+        let mut anonim = isian(1);
+        anonim.anonim = true;
+        let (_, minta) = Kiriman::mulai(anonim, Some("abc".into())).unwrap();
         assert_eq!(minta.url, format!("{API}/api/mobile/tiket"));
     }
 }

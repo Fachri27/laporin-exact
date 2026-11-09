@@ -1,0 +1,14 @@
+{
+  "kind": "implementation",
+  "implements": "@laporin/web@^1.0",
+  "platform": "android",
+  "targets": ["android"],
+  "shapes": {},
+  "options": {},
+  "names": [],
+  "views": ["web-halaman"],
+  "hatches": [],
+  "sources": { "kotlin": ["."] },
+  "artifacts": [],
+  "class": "laporin.web.WebModule"
+}

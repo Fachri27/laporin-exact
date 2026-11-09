@@ -6,6 +6,7 @@
     "start": "bun exact.mjs serve dist"
   },
   "dependencies": {
-    "@exact/photos": "file:../exact/packages/photos"
+    "@exact/photos": "file:../exact/packages/photos",
+    "@laporin/web": "file:./paket/web"
   }
 }
