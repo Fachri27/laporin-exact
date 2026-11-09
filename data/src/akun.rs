@@ -53,6 +53,21 @@ pub fn minta_laporan(token: &str) -> Request {
     dengan_token(Request::get(&format!("{API}/api/mobile/saya/laporan")), token)
 }
 
+pub fn minta_komentar(token: &str, id: &str, isi: &str) -> Request {
+    let url = format!("{API}/api/mobile/laporan/{}/komentar", teks::enkode_uri(id));
+    dengan_token(Request::post_json(&url, &json!({ "isi": isi }).to_string()), token)
+}
+
+/// Laporkan konten tidak butuh akun; token dikirim bila ada, seperti laporin-apps.
+pub fn minta_laporkan(token: Option<String>, jenis: &str, id: &str, alasan: &str, catatan: &str) -> Request {
+    let body = json!({ "jenis": jenis, "id": id, "alasan": alasan, "catatan": catatan }).to_string();
+    let minta = Request::post_json(&format!("{API}/api/mobile/laporkan"), &body).header("accept", "application/json").timeout(15_000);
+    match token {
+        Some(t) => minta.header("authorization", &format!("Bearer {t}")),
+        None => minta,
+    }
+}
+
 /// Galat dari server (`{ galat }`) atau keterangan jaringan, untuk balasan `{ ok: false, galat }`.
 pub fn galat(outcome: &Outcome) -> String {
     match outcome {

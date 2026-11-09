@@ -30,6 +30,8 @@ pub struct Isian {
     pub epoch_ms: f64,
     pub selisih_menit: f64,
     pub lampiran: Vec<String>,
+    /// Titik GPS saat formulir dibuka, bila ada.
+    pub lokasi: Option<(f64, f64)>,
 }
 
 #[derive(Debug)]
@@ -151,6 +153,12 @@ impl Kiriman {
         } else if !i.nama.is_empty() {
             kolom.push(("nama", i.nama.as_str()));
         }
+        // Server meminta lat & lng berpasangan, tujuh desimal (laporin-apps src/lib/lapor.ts).
+        let titik = i.lokasi.map(|(lat, lng)| (format!("{lat:.7}"), format!("{lng:.7}")));
+        if let Some((lat, lng)) = &titik {
+            kolom.push(("lat", lat.as_str()));
+            kolom.push(("lng", lng.as_str()));
+        }
         let (jenis, body) = multipart(&kolom, &self.berkas);
         let minta = Request { method: "POST".into(), body, ..Request::get(&format!("{API}/api/mobile/laporan")) }
             .header("content-type", &jenis)
@@ -261,6 +269,7 @@ mod uji {
             epoch_ms: 0.0,
             selisih_menit: 420.0,
             lampiran: (0..lampiran).map(|i| format!("app:/tmp/pilih/{i}")).collect(),
+            lokasi: None,
         }
     }
 

@@ -5,12 +5,15 @@
     "": {
       "name": "laporin-exact",
       "dependencies": {
+        "@exact/geolocation": "file:../exact/packages/geolocation",
         "@exact/photos": "file:../exact/packages/photos",
         "@laporin/web": "file:./paket/web",
       },
     },
   },
   "packages": {
+    "@exact/geolocation": ["@exact/geolocation@file:../exact/packages/geolocation", {}],
+
     "@exact/photos": ["@exact/photos@file:../exact/packages/photos", {}],
 
     "@laporin/web": ["@laporin/web@file:paket/web", {}],

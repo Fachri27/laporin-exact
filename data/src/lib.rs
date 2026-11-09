@@ -73,7 +73,7 @@ fn balasan(ok: bool, galat: &str) -> Answer {
     Answer::Now(Balasan { ok, galat: galat.into() }.to_value())
 }
 
-/// Argumen `kirimLaporan(judul, deskripsi, nama, anonim, epochMs, selisihMenit, lampiran)`.
+/// Argumen `kirimLaporan(judul, deskripsi, nama, anonim, epochMs, selisihMenit, lampiran, adaLokasi, lat, lng)`.
 fn isian(args: &[Value]) -> Result<kirim::Isian, DataError> {
     Ok(kirim::Isian {
         judul: teks_arg(args, 0)?.trim().to_string(),
@@ -86,6 +86,11 @@ fn isian(args: &[Value]) -> Result<kirim::Isian, DataError> {
             .get(6)
             .and_then(<Vec<String> as ContractValue>::from_value)
             .ok_or_else(|| DataError::BadArguments("argumen 6 harus daftar teks".into()))?,
+        // `adaLokasi`, `lat`, `lng`: angka NaN ditolak di batas data, jadi ada-tidaknya titik dikirim terpisah.
+        lokasi: match args.get(7).and_then(Value::as_bool) {
+            Some(true) => Some((angka_arg(args, 8)?, angka_arg(args, 9)?)),
+            _ => None,
+        },
     })
 }
 
@@ -106,6 +111,7 @@ impl DataSource for Laporin {
             "fs.write app:/data/laporan-saya.json\n",
             "fs.read app:/tmp\n",
             "fs.write app:/tmp\n",
+            "device.geolocation lokasiAlasan\n",
             "secret.keep sesi-laporin"
         )
     }
@@ -117,7 +123,7 @@ impl DataSource for Laporin {
             // Bingkai pertama sebagai tamu; sesi tersimpan dibaca saat berjalan.
             "muatSesi" => Ok(Sesi::default().to_value()),
             "muatLaporanAkun" => Ok(Vec::<LaporanAkun>::new().to_value()),
-            "masukUji" | "keluar" => Err(DataError::Unavailable("dijawab saat berjalan".into())),
+            "masukUji" | "keluar" | "kirimKomentar" | "laporkanKonten" => Err(DataError::Unavailable("dijawab saat berjalan".into())),
             "muatUmpan" | "muatHotspot" | "muatKomentar" | "muatLaporanSaya" | "kirimLaporan" => {
                 Err(DataError::Unavailable("dijawab saat berjalan".into()))
             }
@@ -154,6 +160,18 @@ impl DataSource for Laporin {
                 Some(s) => Answer::Later(akun::minta_keluar(&s.token)),
                 None => balasan(true, ""),
             },
+            "kirimKomentar" => {
+                let (id, isi) = (teks_arg(args, 0)?, teks_arg(args, 1)?.trim());
+                match akun::tersimpan(store) {
+                    None => balasan(false, "Masuk dulu untuk berkomentar."),
+                    Some(_) if isi.is_empty() => balasan(false, "Tulis komentarnya dulu."),
+                    Some(s) => Answer::Later(akun::minta_komentar(&s.token, id, isi)),
+                }
+            }
+            "laporkanKonten" => {
+                let (jenis, id, alasan, catatan) = (teks_arg(args, 0)?, teks_arg(args, 1)?, teks_arg(args, 2)?, teks_arg(args, 3)?);
+                Answer::Later(akun::minta_laporkan(akun::tersimpan(store).map(|s| s.token), jenis, id, alasan, catatan))
+            }
             "kirimLaporan" => match kirim::Kiriman::mulai(isian(args)?, akun::tersimpan(store).map(|s| s.token)) {
                 Ok((kiriman, minta)) => {
                     self.kiriman = Some(kiriman);
@@ -175,6 +193,10 @@ impl DataSource for Laporin {
             "masukUji" => Ok(match akun::simpan_masuk(store, &outcome) {
                 Ok(_) => balasan(true, ""),
                 Err(e) => balasan(false, &e),
+            }),
+            "kirimKomentar" | "laporkanKonten" => Ok(match &outcome {
+                Outcome::Response(r) if (200..300).contains(&r.status) => balasan(true, ""),
+                lain => balasan(false, &akun::galat(lain)),
             }),
             // Keluar di HP selalu berhasil; server yang tak terjangkau hanya tidak sempat mencabut tokennya.
             "keluar" => {

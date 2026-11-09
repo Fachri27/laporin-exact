@@ -59,9 +59,14 @@ APK baru.
 
 ## Batasan Exact di Android (per November 2026)
 
-- Tampilan digambar ke Canvas; yang berupa View asli hanya kolom teks, bilah, dialog dan menu.
+Tampilan mengikuti laporin-apps layar per layar (dibandingkan dengan screenshot aplikasi aslinya di emulator). Yang
+belum bisa sama:
+
+- Tampilan digambar ke Canvas; yang berupa View asli hanya kolom teks, bilah, dialog, menu, WebView peta.
 - Gambar hanya JPEG/PNG/SVG: sampul memakai `/_next/image` (membalas JPEG), bukan WebP.
-- Belum ada peta interaktif, video, kamera, atau LiveKit: tab Peta menampilkan ringkasan hotspot, Live hanya
-  banner, dan lampiran hanya foto dari galeri (paket kamera Exact belum punya implementasi Android).
-- Belum ada login: kiriman sebagai tamu dengan tiket captcha mock (`mock-captcha`), yang hanya diterima mock-server.
+- Video tidak diputar (kartu menampilkan sampul + pil senyap), kamera belum ada (Ambil foto membuka galeri),
+  media Detail digeser dengan ketuk kiri/kanan (scroll-snap belum dibaca), siaran live (LiveKit) belum ada.
+- Ikon status bar Android mengikuti skema aplikasi, jadi strip status bar di Detail tetap terang (aslinya gelap).
+- Masuk Google dan email belum ada; Masuk uji ke mock-server saja. Komentar dikirim ke mock-server, tetapi daftar
+  komentar dibaca dari fire.nusantara.earth, jadi komentar baru hanya tampil di HP yang mengirimnya.
 - APK masih build pengembangan (kunci debug, tanpa ikon peluncur).

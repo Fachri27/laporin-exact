@@ -4,7 +4,7 @@
 
 use serde_json::Value as Json;
 
-use crate::shapes::{Komentar, Laporan, Pulau, Umpan};
+use crate::shapes::{Komentar, Laporan, Pulau, Sumber, Umpan};
 use crate::teks;
 
 pub const SITUS: &str = "https://fire.nusantara.earth";
@@ -43,6 +43,19 @@ fn laporan(j: &Json) -> Option<Laporan> {
     let pulau = teks_atau(j, "pulau", "");
     let tempat = teks_atau(j, "provinsi", if pulau.is_empty() { "Indonesia" } else { pulau });
     let tanggal = teks_atau(j, "tanggal", "");
+    let lokasi = teks_atau(j, "lokasi", "");
+    // Tempat singkat di meta kartu kisi: bagian pertama `lokasi` (desa), atau tempat bila tak ada.
+    let desa = lokasi.split(',').next().map(str::trim).filter(|d| !d.is_empty()).unwrap_or(tempat);
+    // Semua foto untuk penggeser media di Detail: gambar, atau poster video.
+    let galeri: Vec<String> = media
+        .iter()
+        .map(|m| match m.get("jenis").and_then(Json::as_str) {
+            Some("video") => teks_atau(m, "poster", ""),
+            _ => teks_atau(m, "url", ""),
+        })
+        .filter(|p| !p.is_empty())
+        .map(|p| gambar(p, 1200))
+        .collect();
     let (lintang, bujur) = teks::koordinat(lat, lng);
     Some(Laporan {
         id: id.to_string(),
@@ -50,16 +63,21 @@ fn laporan(j: &Json) -> Option<Laporan> {
         judul: judul.trim().to_string(),
         pulau: pulau.to_string(),
         tempat: tempat.to_string(),
+        desa: desa.to_string(),
         tanggal: tanggal.to_string(),
         tanggal_pendek: teks::tanggal_pendek(tanggal),
-        lokasi: teks_atau(j, "lokasi", "").to_string(),
+        lokasi: lokasi.to_string(),
         lintang,
         bujur,
+        lat,
+        lng,
         deskripsi: teks_atau(j, "deskripsi", "").trim().to_string(),
         sampul: gambar(sampul, 828),
-        sampul_kecil: gambar(sampul, 384),
+        sampul_kecil: gambar(sampul, 640),
         kredit: kredit.to_string(),
         inisial: teks::inisial(kredit),
+        jumlah_kredit: 0.0,
+        galeri,
         jumlah_media: media.len() as f64,
         ada_video: media.iter().any(|m| m.get("jenis").and_then(Json::as_str) == Some("video")),
         vertikal: j.get("vertikal").and_then(Json::as_bool).unwrap_or(false),
@@ -72,17 +90,38 @@ fn laporan(j: &Json) -> Option<Laporan> {
 pub fn olah_umpan(body: &[u8]) -> Result<Umpan, String> {
     let data: Json = serde_json::from_slice(body).map_err(|e| format!("JSON umpan: {e}"))?;
     let butir = data.as_array().ok_or("umpan bukan larik")?;
-    let laporan: Vec<Laporan> = butir.iter().filter_map(laporan).collect();
-    let mut pulau: Vec<Pulau> = Vec::new();
-    for l in laporan.iter().filter(|l| !l.pulau.is_empty()) {
-        match pulau.iter_mut().find(|p| p.nama == l.pulau) {
+    let mut laporan: Vec<Laporan> = butir.iter().filter_map(laporan).collect();
+    // "{n} laporan terverifikasi" di Detail: laporan lain dengan nama pengirim (kredit) yang sama.
+    let mut per_kredit: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    for l in &laporan {
+        *per_kredit.entry(l.kredit.clone()).or_default() += 1.0;
+    }
+    for l in &mut laporan {
+        l.jumlah_kredit = per_kredit[&l.kredit];
+    }
+    let pulau = hitung_per(&laporan, |l| &l.pulau, usize::MAX);
+    // "Sedang ramai" di Cari: delapan provinsi dengan laporan terbanyak.
+    let provinsi = hitung_per(&laporan, |l| if l.tempat == l.pulau || l.tempat == "Indonesia" { "" } else { &l.tempat }, 8);
+    // "Sumber Terverifikasi": sepuluh pengirim terbanyak, tanpa nama bawaan.
+    let sumber = hitung_per(&laporan, |l| if l.kredit == "Laporan warga" || l.kredit == "Anonim" { "" } else { &l.kredit }, 10)
+        .into_iter()
+        .map(|p| Sumber { inisial: teks::inisial(&p.nama), nama: p.nama, jumlah: p.jumlah })
+        .collect();
+    Ok(Umpan { laporan, pulau, provinsi, sumber })
+}
+
+/// Jumlah laporan per nilai `kunci` (yang kosong dilewati), menurun; seri tetap pada urutan kemunculan pertama.
+fn hitung_per(laporan: &[Laporan], kunci: impl Fn(&Laporan) -> &str, batas: usize) -> Vec<Pulau> {
+    let mut hasil: Vec<Pulau> = Vec::new();
+    for nama in laporan.iter().map(&kunci).filter(|k| !k.is_empty()) {
+        match hasil.iter_mut().find(|p| p.nama == nama) {
             Some(p) => p.jumlah += 1.0,
-            None => pulau.push(Pulau { nama: l.pulau.clone(), jumlah: 1.0 }),
+            None => hasil.push(Pulau { nama: nama.to_string(), jumlah: 1.0 }),
         }
     }
-    // Stabil: pulau dengan jumlah sama tetap pada urutan kemunculan pertama.
-    pulau.sort_by(|a, b| b.jumlah.total_cmp(&a.jumlah));
-    Ok(Umpan { laporan, pulau })
+    hasil.sort_by(|a, b| b.jumlah.total_cmp(&a.jumlah));
+    hasil.truncate(batas);
+    hasil
 }
 
 /// Teks JSON komentar → akar komentar (terbaru dulu), dengan jumlah balasan masing-masing.
@@ -137,12 +176,20 @@ mod uji {
         assert_eq!(l.sampul, format!("{SITUS}/_next/image?url=%2Fmedia%2Fposter%2Fa.jpg&w=828&q=75"));
         assert_eq!((l.lintang.as_str(), l.bujur.as_str()), ("2,01° LS", "113,50° BT"));
         assert_eq!(l.tanggal_pendek, "4 NOV");
+        assert_eq!(l.desa, "Handiwung");
+        assert_eq!(l.galeri.len(), 2);
+        assert_eq!(l.jumlah_kredit, 1.0);
+        assert_eq!(u.laporan[1].desa, "Sumatra");
         // Tanpa provinsi: tempat = pulau; tanpa media: kredit bawaan, tanpa sampul.
         assert_eq!(u.laporan[1].tempat, "Sumatra");
         assert_eq!(u.laporan[1].kredit, "Laporan warga");
         assert_eq!(u.laporan[1].sampul, "");
         let pulau: Vec<(&str, f64)> = u.pulau.iter().map(|p| (p.nama.as_str(), p.jumlah)).collect();
         assert_eq!(pulau, [("Kalimantan", 2.0), ("Sumatra", 1.0)]);
+        let prov: Vec<&str> = u.provinsi.iter().map(|p| p.nama.as_str()).collect();
+        assert_eq!(prov, ["Kalimantan Tengah"]);
+        let sumber: Vec<(&str, &str)> = u.sumber.iter().map(|s| (s.nama.as_str(), s.inisial.as_str())).collect();
+        assert_eq!(sumber, [("Muhamad", "MU")]);
     }
 
     #[test]

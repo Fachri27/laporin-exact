@@ -22,6 +22,7 @@ theme
   status.bahaya = light-dark(#B3261E, #FF7A57)
   status.peringatan = light-dark(#8A5A00, #E8BD55)
   status.peringatan-lembut = light-dark(rgba(176, 120, 0, 0.12), rgba(232, 189, 85, 0.12))
+  status.peringatan-garis = light-dark(rgba(138, 90, 0, 0.18), rgba(232, 189, 85, 0.18))
   status.sukses = light-dark(#1E6B43, #7FD6A0)
   media.kartu = #161817  scheme=fixed
   media.kaca = rgba(12, 14, 13, 0.86)  scheme=fixed
@@ -29,6 +30,9 @@ theme
   media.teks = #EDE8DF  scheme=fixed
   media.redup = rgba(237, 232, 223, 0.75)  scheme=fixed
   media.tinta = #0C0E0D  scheme=fixed
+  media.garis = rgba(237, 232, 223, 0.25)  scheme=fixed
+  avatar.isi = light-dark(rgba(12, 14, 13, 0.12), rgba(237, 232, 223, 0.2))
+  avatar.teks = light-dark(#0C0E0D, #EDE8DF)
   bayangan.bilah = rgba(0, 0, 0, 0.35)  scheme=fixed
   bayangan.kartu = rgba(0, 0, 0, 0.18)  scheme=fixed
   // Tingkat kepercayaan hotspot (SiPongi): sama di kedua mode, seperti legenda petanya.
@@ -47,3 +51,15 @@ icons
   icon.awas = icon(sf "exclamationmark.triangle", svg "icons/awas.svg")
   icon.anonim = icon(sf "eye.slash", svg "icons/anonim.svg")
   icon.api = icon(sf "flame", svg "icons/api.svg")
+  icon.pengguna = icon(sf "person", svg "icons/pengguna.svg")
+  icon.salin = icon(sf "square.on.square", svg "icons/salin.svg")
+  icon.matahari = icon(sf "sun.max", svg "icons/matahari.svg")
+  icon.senyap = icon(sf "speaker.slash", svg "icons/senyap.svg")
+  icon.komentar = icon(sf "bubble.left", svg "icons/komentar.svg")
+  icon.penuh = icon(sf "arrow.up.left.and.arrow.down.right", svg "icons/penuh.svg")
+  icon.bagikan = icon(sf "square.and.arrow.up", svg "icons/bagikan.svg")
+  icon.bendera = icon(sf "flag", svg "icons/bendera.svg")
+  icon.gambar = icon(sf "photo", svg "icons/gambar.svg")
+  icon.kiri = icon(sf "chevron.left", svg "icons/kiri.svg")
+  icon.surel = icon(sf "envelope", svg "icons/surel.svg")
+  icon.simpan = icon(sf "bookmark", svg "icons/simpan.svg")
