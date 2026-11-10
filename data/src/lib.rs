@@ -9,9 +9,9 @@
 //! | `muatKomentar(id)` | GET `LAPORIN_SITUS`/api/laporan/{id}/komentar | `umpan::olah_komentar` |
 //! | `muatHotspot()` | GET geoplatform.nusantara.earth/api/hotspot | `hotspot::olah_hotspot` |
 //! | `muatLaporanSaya()` | baca app:/data/laporan-saya.json | `simpan::ke_laporan` |
-//! | `muatSesi()`, `muatLaporanAkun()` | GET /api/mobile/saya, /saya/laporan dengan sesi di `Store` (`akun`) |
+//! | `muatSesi()`, `muatLaporanAkun(email)` | (pulihkan app:/data/sesi.json,) GET /api/mobile/saya, /saya/laporan dengan sesi di `Store` (`akun`) |
 //! | `masukUji(nama)`, `masukEmail(email, sandi)`, `daftarEmail(nama, email, sandi)`, `keluar()` | POST /api/mobile/masuk/uji, /masuk/email, /daftar, /keluar | balasan `{ ok, galat }` |
-//! | `muatDisukai()`, `aturSuka(id, suka)` | GET /api/mobile/saya/disukai, POST/DELETE /laporan/{id}/suka | id teks, balasan `{ ok, galat }` |
+//! | `muatDisukai(email)`, `aturSuka(id, suka)` | GET /api/mobile/saya/disukai, POST/DELETE /laporan/{id}/suka | id teks, balasan `{ ok, galat }` |
 //! | `kirimLaporan(…)` | tiket, perkecil & baca foto, POST multipart ke `LAPORIN_API` (`kirim`) | balasan `{ ok, galat }` |
 
 pub mod akun;
@@ -35,6 +35,23 @@ const BATAS_WAKTU_MS: u32 = 20_000;
 pub struct Laporin {
     /// Kiriman yang sedang berjalan di antara `answer` dan `parse` (satu per waktu).
     kiriman: Option<kirim::Kiriman>,
+    /// `app:/data/sesi.json` sudah dibaca di proses ini (sekali saja: sesi yang dihapus tidak dipulihkan lagi).
+    sesi_dibaca: bool,
+    /// Langkah `muatSesi` yang sedang berjalan.
+    tahap_sesi: TahapSesi,
+    /// Masuk/keluar sedang menulis `app:/data/sesi.json` setelah balasan server.
+    menulis_sesi: bool,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+enum TahapSesi {
+    /// GET /saya dengan sesi di Store.
+    #[default]
+    Profil,
+    /// Membaca `app:/data/sesi.json`.
+    Pulihkan,
+    /// Menghapus salinan sesi yang ditolak server (401).
+    Hapus,
 }
 
 fn teks_arg(args: &[Value], i: usize) -> Result<&str, DataError> {
@@ -112,9 +129,12 @@ impl DataSource for Laporin {
             "\ndevice.photos fotoAlasan\n",
             "fs.read app:/data/laporan-saya.json\n",
             "fs.write app:/data/laporan-saya.json\n",
+            "fs.read app:/data/sesi.json\n",
+            "fs.write app:/data/sesi.json\n",
             "fs.read app:/tmp\n",
             "fs.write app:/tmp\n",
             "device.geolocation lokasiAlasan\n",
+            "device.camera kameraAlasan\n",
             "secret.keep sesi-laporin"
         )
     }
@@ -149,7 +169,15 @@ impl DataSource for Laporin {
             }
             "muatLaporanSaya" => Answer::Later(simpan::minta_baca()),
             "muatSesi" => match akun::tersimpan(store) {
-                Some(s) => Answer::Later(akun::minta_profil(&s.token)),
+                Some(s) => {
+                    self.tahap_sesi = TahapSesi::Profil;
+                    Answer::Later(akun::minta_profil(&s.token))
+                }
+                None if !self.sesi_dibaca => {
+                    self.sesi_dibaca = true;
+                    self.tahap_sesi = TahapSesi::Pulihkan;
+                    Answer::Later(akun::minta_baca_sesi())
+                }
                 None => Answer::Now(Sesi::default().to_value()),
             },
             "muatLaporanAkun" => match akun::tersimpan(store) {
@@ -179,7 +207,10 @@ impl DataSource for Laporin {
             }
             "keluar" => match akun::tersimpan(store) {
                 Some(s) => Answer::Later(akun::minta_keluar(&s.token)),
-                None => balasan(true, ""),
+                None => {
+                    self.menulis_sesi = true;
+                    Answer::Later(akun::minta_tulis_sesi("{}"))
+                }
             },
             "kirimKomentar" => {
                 let (id, isi) = (teks_arg(args, 0)?, teks_arg(args, 1)?.trim());
@@ -206,7 +237,28 @@ impl DataSource for Laporin {
 
     fn parse(&mut self, store: &mut Store, source: &str, _args: &[Value], outcome: Outcome) -> Result<Answer, DataError> {
         match source {
-            "muatSesi" => Ok(Answer::Now(akun::sesi(store, &outcome).to_value())),
+            "muatSesi" => match self.tahap_sesi {
+                TahapSesi::Pulihkan => {
+                    self.tahap_sesi = TahapSesi::Profil;
+                    Ok(match akun::pulihkan(store, outcome) {
+                        Some(s) => Answer::Later(akun::minta_profil(&s.token)),
+                        None => Answer::Now(Sesi::default().to_value()),
+                    })
+                }
+                TahapSesi::Hapus => {
+                    self.tahap_sesi = TahapSesi::Profil;
+                    Ok(Answer::Now(Sesi::default().to_value()))
+                }
+                TahapSesi::Profil => {
+                    let ditolak = matches!(&outcome, Outcome::Response(r) if r.status == 401);
+                    let sesi = akun::sesi(store, &outcome);
+                    if ditolak {
+                        self.tahap_sesi = TahapSesi::Hapus;
+                        return Ok(Answer::Later(akun::minta_tulis_sesi("{}")));
+                    }
+                    Ok(Answer::Now(sesi.to_value()))
+                }
+            },
             "muatLaporanAkun" => {
                 let daftar = akun::laporan(store, &outcome).map_err(|e| gagal(FailureCode::Offline, e))?;
                 Ok(Answer::Now(daftar.to_value()))
@@ -215,8 +267,16 @@ impl DataSource for Laporin {
                 let daftar = akun::disukai(store, &outcome).map_err(|e| gagal(FailureCode::Offline, e))?;
                 Ok(Answer::Now(daftar.to_value()))
             }
+            // Langkah kedua: salinan sesi sudah ditulis (atau gagal ditulis: sesi tetap berlaku sampai aplikasi ditutup).
+            "masukUji" | "masukEmail" | "daftarEmail" | "keluar" if self.menulis_sesi => {
+                self.menulis_sesi = false;
+                Ok(balasan(true, ""))
+            }
             "masukUji" | "masukEmail" | "daftarEmail" => Ok(match akun::simpan_masuk(store, &outcome) {
-                Ok(_) => balasan(true, ""),
+                Ok(sesi) => {
+                    self.menulis_sesi = true;
+                    Answer::Later(akun::minta_tulis_sesi(&sesi))
+                }
                 Err(e) => balasan(false, &e),
             }),
             "kirimKomentar" | "laporkanKonten" | "aturSuka" => Ok(match &outcome {
@@ -226,7 +286,8 @@ impl DataSource for Laporin {
             // Keluar di HP selalu berhasil; server yang tak terjangkau hanya tidak sempat mencabut tokennya.
             "keluar" => {
                 akun::lupakan(store);
-                Ok(balasan(true, ""))
+                self.menulis_sesi = true;
+                Ok(Answer::Later(akun::minta_tulis_sesi("{}")))
             }
             "muatUmpan" => {
                 let u = umpan::olah_umpan(&badan(outcome)?).map_err(|e| gagal(FailureCode::Shape, e))?;

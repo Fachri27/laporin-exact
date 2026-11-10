@@ -31,6 +31,7 @@ theme
   media.redup = rgba(237, 232, 223, 0.75)  scheme=fixed
   media.tinta = #0C0E0D  scheme=fixed
   media.garis = rgba(237, 232, 223, 0.25)  scheme=fixed
+  media.redam = rgba(12, 14, 13, 0.5)  scheme=fixed
   avatar.isi = light-dark(rgba(12, 14, 13, 0.12), rgba(237, 232, 223, 0.2))
   avatar.teks = light-dark(#0C0E0D, #EDE8DF)
   bayangan.bilah = rgba(0, 0, 0, 0.35)  scheme=fixed
@@ -63,3 +64,7 @@ icons
   icon.kiri = icon(sf "chevron.left", svg "icons/kiri.svg")
   icon.surel = icon(sf "envelope", svg "icons/surel.svg")
   icon.simpan = icon(sf "bookmark", svg "icons/simpan.svg")
+  icon.lampu = icon(sf "bolt", svg "icons/lampu.svg")
+  icon.mundur = icon(sf "gobackward", svg "icons/mundur.svg")
+  icon.maju = icon(sf "goforward", svg "icons/maju.svg")
+  icon.balik = icon(sf "arrow.triangle.2.circlepath.camera", svg "icons/balik.svg")

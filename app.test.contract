@@ -51,3 +51,14 @@ test "form email menolak isian kosong dan sandi pendek saat daftar"
   type "sandi" "pendek"
   tap "kirim-email"
   expect text "galat-email" == "Kata sandi minimal 8 karakter."
+
+test "Ambil foto membuka kamera, dan Tutup kembali ke formulir"
+  tap "tombol-lapor"
+  clock settle
+  tap "ambil-foto"
+  clock settle
+  expect tree has "tutup-kamera"
+  expect tree has "rana"
+  tap "tutup-kamera"
+  clock settle
+  expect tree has "kirim"

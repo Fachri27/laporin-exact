@@ -1,4 +1,5 @@
 {
   "fotoAlasan": "Laporin memakai foto dari galeri sebagai bukti laporan kebakaran.",
-  "lokasiAlasan": "Laporin mencatat titik GPS kejadian supaya petugas cepat menemukannya."
+  "lokasiAlasan": "Laporin mencatat titik GPS kejadian supaya petugas cepat menemukannya.",
+  "kameraAlasan": "Laporin memakai kamera untuk memotret kejadian sebagai bukti laporan kebakaran."
 }

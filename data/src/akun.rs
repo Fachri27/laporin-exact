@@ -4,6 +4,10 @@
 //! Sesi disimpan di `Store` (rahasia aplikasi, grant `secret.keep`) sebagai JSON `{token, nama, email}`, jadi
 //! Profil tetap menyebut nama pengguna ketika server tidak terjangkau. Balasan 401 berarti sesi sudah tidak
 //! berlaku di server: sesinya dihapus dan aplikasi kembali sebagai tamu.
+//!
+//! Host Android Exact (pre-1.0) tidak bisa menulis rahasia ke disk ("lock acquisition failed due to I/O error"
+//! di jurnal): Store hanya memegangnya selama aplikasi hidup. Jadi sesi juga ditulis ke `app:/data/sesi.json`
+//! dan dipulihkan dari sana ke Store saat `muatSesi()` pertama setelah aplikasi dibuka.
 
 use exact_runner::{Outcome, Request, Store};
 use serde_json::{json, Value as Json};
@@ -13,6 +17,7 @@ use crate::shapes::{LaporanAkun, Sesi};
 use crate::teks;
 
 pub const KUNCI_SESI: &str = "sesi-laporin";
+pub const BERKAS_SESI: &str = "app:/data/sesi.json";
 
 /// Sesi yang tersimpan: token Bearer dan identitas untuk tampilan luring.
 pub struct Tersimpan {
@@ -30,6 +35,26 @@ pub fn tersimpan(store: &Store) -> Option<Tersimpan> {
 
 pub fn lupakan(store: &mut Store) {
     let _ = store.forget(KUNCI_SESI);
+}
+
+pub fn minta_baca_sesi() -> Request {
+    exact_data::storage::request("fs.readFile", json!({ "path": BERKAS_SESI }))
+}
+
+/// Tulis salinan sesi (`"{}"` = keluar).
+pub fn minta_tulis_sesi(isi: &str) -> Request {
+    exact_data::storage::request("fs.atomicWriteFile", json!({ "path": BERKAS_SESI, "text": isi }))
+}
+
+/// Sesi dari isi `app:/data/sesi.json`, dimasukkan lagi ke Store. Berkas yang belum ada, kosong atau rusak = tamu.
+pub fn pulihkan(store: &mut Store, outcome: Outcome) -> Option<Tersimpan> {
+    let v = exact_data::storage::response(outcome).ok()?;
+    let bita = teks::base64(v.get("base64")?.as_str()?)?;
+    let isi = String::from_utf8(bita).ok()?;
+    let j: Json = serde_json::from_str(&isi).ok()?;
+    let token = j["token"].as_str().filter(|t| !t.is_empty())?.to_string();
+    let _ = store.set(KUNCI_SESI, &isi);
+    Some(Tersimpan { token, nama: j["nama"].as_str().unwrap_or("").into(), email: j["email"].as_str().unwrap_or("").into() })
 }
 
 fn dengan_token(minta: Request, token: &str) -> Request {
@@ -107,7 +132,7 @@ pub fn galat(outcome: &Outcome) -> String {
     }
 }
 
-/// Balasan `masuk/uji` → sesi tersimpan, atau pesan galatnya.
+/// Balasan masuk → sesi tersimpan di Store (JSON-nya dikembalikan untuk `app:/data/sesi.json`), atau pesan galatnya.
 pub fn simpan_masuk(store: &mut Store, outcome: &Outcome) -> Result<String, String> {
     let Outcome::Response(r) = outcome else { return Err(galat(outcome)) };
     if !(200..300).contains(&r.status) {
@@ -118,8 +143,9 @@ pub fn simpan_masuk(store: &mut Store, outcome: &Outcome) -> Result<String, Stri
     let p = &j["pengguna"];
     let nama = p["nama"].as_str().unwrap_or("").to_string();
     let sesi = json!({ "token": token, "nama": nama, "email": p["email"].as_str().unwrap_or("") });
+    let _ = nama;
     store.set(KUNCI_SESI, &sesi.to_string()).map_err(|e| format!("Sesi tidak bisa disimpan: {e:?}"))?;
-    Ok(nama)
+    Ok(sesi.to_string())
 }
 
 /// Sesi untuk Profil dari balasan `GET /saya`. Tanpa jaringan, sesi tersimpan tanpa statistik; 401 = keluar.

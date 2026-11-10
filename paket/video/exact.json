@@ -10,7 +10,9 @@
         "sumber": "string",
         "bisu": "bool",
         "putar": "bool",
-        "pas": "string"
+        "pas": "string",
+        "lompat": "option<number>",
+        "lompatKe": "option<number>"
       },
       "events": ["message"]
     }

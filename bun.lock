@@ -5,7 +5,9 @@
     "": {
       "name": "laporin-exact",
       "dependencies": {
+        "@exact/camera": "file:../exact/packages/camera",
         "@exact/geolocation": "file:../exact/packages/geolocation",
+        "@exact/media-capture": "file:../exact/packages/media-capture",
         "@exact/photos": "file:../exact/packages/photos",
         "@laporin/video": "file:./paket/video",
         "@laporin/web": "file:./paket/web",
@@ -13,7 +15,11 @@
     },
   },
   "packages": {
+    "@exact/camera": ["@exact/camera@file:../exact/packages/camera", { "peerDependencies": { "@exact/media-capture": "1.0.0" }, "optionalPeers": ["@exact/media-capture"] }],
+
     "@exact/geolocation": ["@exact/geolocation@file:../exact/packages/geolocation", {}],
+
+    "@exact/media-capture": ["@exact/media-capture@file:../exact/packages/media-capture", {}],
 
     "@exact/photos": ["@exact/photos@file:../exact/packages/photos", {}],
 

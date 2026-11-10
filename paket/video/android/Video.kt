@@ -1,8 +1,9 @@
 // @laporin/video di Android: `video-putar` adalah MediaPlayer yang menggambar ke TextureView. TextureView, bukan
 // SurfaceView: host Exact merekam gambar view native ke RenderNode di alur kanvas, jadi tombol Contract tetap
 // tampil di atas video. Props: `sumber` (alamat https), `bisu`, `putar` (false = jeda), `pas` ("cover" atau
-// "contain"). Video berulang seperti di laporin-apps. Mengirim `message` "memuat", "main", "jeda" dan
-// "galat: …" supaya Contract bisa menampilkan statusnya.
+// "contain"), `lompat` (detik) yang dituju setiap kali `lompatKe` berubah. Video berulang seperti di laporin-apps.
+// Mengirim `message` "memuat", "main", "jeda", "galat: …" dan, tiap 250 ms selama main serta sesudah lompat,
+// "waktu <posisi ms> <durasi ms>" supaya Contract bisa menggambar status, kemajuan dan penggesernya.
 package laporin.video
 
 import android.content.Context
@@ -11,6 +12,8 @@ import android.graphics.SurfaceTexture
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
@@ -60,6 +63,15 @@ private class Pemutar(
     private var permukaan: Surface? = null
     private var lebarVideo = 0
     private var tinggiVideo = 0
+    private var lompatKe: Int? = null
+    private var lompatTertunda = -1
+    private val jam = Handler(Looper.getMainLooper())
+    private val detak = object : Runnable {
+        override fun run() {
+            laporWaktu()
+            if (mp?.isPlaying == true) jam.postDelayed(this, 250)
+        }
+    }
 
     init {
         tekstur.surfaceTextureListener = this
@@ -75,9 +87,14 @@ private class Pemutar(
             cover = coverBaru
             sesuaikan()
         }
+        // Lompat hanya saat penghitungnya berubah: lompatan pertama yang terlihat adalah nilai awalnya.
+        val ke = props.optInt("lompatKe", 0)
+        if (lompatKe != null && ke != lompatKe) lompatTertunda = (props.optDouble("lompat", 0.0) * 1000).toInt().coerceAtLeast(0)
+        lompatKe = ke
         val s = props.optString("sumber")
         if (s != sumber) {
             sumber = s
+            lompatTertunda = -1
             muat()
         } else {
             terapkan()
@@ -108,7 +125,9 @@ private class Pemutar(
             if (mp !== it) return@setOnPreparedListener
             siap = true
             terapkan()
+            laporWaktu()
         }
+        m.setOnSeekCompleteListener { if (mp === it) laporWaktu() }
         m.setOnVideoSizeChangedListener { _, w, h ->
             lebarVideo = w
             tinggiVideo = h
@@ -142,14 +161,27 @@ private class Pemutar(
         if (!siap) return
         val volume = if (bisu) 0f else 1f
         m.setVolume(volume, volume)
+        if (lompatTertunda >= 0) {
+            m.seekTo(lompatTertunda.toLong().coerceAtMost(m.duration.toLong()), MediaPlayer.SEEK_CLOSEST)
+            lompatTertunda = -1
+        }
         val main = putar && !diLatar
         if (main && !m.isPlaying) {
             m.start()
             emit("message", "main")
+            jam.removeCallbacks(detak)
+            jam.post(detak)
         } else if (!main && m.isPlaying) {
             m.pause()
             emit("message", "jeda")
+            laporWaktu()
         }
+    }
+
+    private fun laporWaktu() {
+        val m = mp ?: return
+        if (!siap) return
+        emit("message", "waktu ${m.currentPosition} ${m.duration.coerceAtLeast(0)}")
     }
 
     /** Video di tengah view: "contain" utuh dengan bilah latar, "cover" memenuhi view dan memotong sisanya. */
@@ -180,6 +212,7 @@ private class Pemutar(
     override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
 
     private fun lepasPemutar() {
+        jam.removeCallbacks(detak)
         siap = false
         mp?.release()
         mp = null

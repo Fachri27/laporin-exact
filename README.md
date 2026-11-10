@@ -9,7 +9,8 @@ Android, dengan inti Rust sebagai backend di HP. Exact dipakai lewat path dari `
 | `app.tamber` | Token warna SAKSI terang/gelap dan ikon kustom |
 | `data/` | Inti Rust: umpan dan komentar (`LAPORIN_SITUS`), olahan hotspot (geoplatform), akun & suka (`akun.rs`), kirim laporan ke server (`kirim.rs`), salinan untuk Profil (`app:/data`) |
 | `android/` | Pustaka yang dimuat pembaca Canvas Exact (`libexactcanvas.so`) |
-| `paket/web`, `paket/video` | Paket lokal Kotlin: WebView peta (`web-halaman`) dan pemutar video (`video-putar`) |
+| `paket/web`, `paket/video` | Paket lokal Kotlin: WebView peta (`web-halaman`) dan pemutar video (`video-putar`, dengan lompat dan laporan waktu) |
+| `gradle.lockfile`, `gradle-verification.xml` | Kunci dan checksum Maven untuk CameraX (`@exact/camera`); tulis ulang dengan `bun exact.mjs android --write-locks` bila paket berpustaka Maven berubah |
 | `tools/garis_ke_isi.py` | Ubah ikon bergaris (`tools/ikon-garis/`) jadi path terisi yang bisa digambar Android |
 
 ## Kirim laporan ke mock-server
@@ -39,14 +40,23 @@ Foto dipilih dari galeri lewat `@exact/photos`. Dialog izinnya muncul saat formu
 ## Akun, suka, peta dan video
 
 - **Masuk** (Profil): Masuk uji (`POST /api/mobile/masuk/uji`) atau email (`/masuk/email`, daftar lewat
-  `/daftar`) ke mock-server; sesi `{token, nama, email}` disimpan inti Rust di rahasia aplikasi
-  (`secret.keep sesi-laporin`). Setelah masuk, Profil membaca `/api/mobile/saya` dan `/saya/laporan`, dan Lapor
-  mengirim dengan Bearer token tanpa captcha (kecuali anonim).
+  `/daftar`) ke mock-server; sesi `{token, nama, email}` dipegang inti Rust di Store (`secret.keep sesi-laporin`)
+  dan disalin ke `app:/data/sesi.json`. Host Android Exact tidak bisa menulis rahasia ke disk (jurnal: `store
+  sesi-laporin failed: lock acquisition failed due to I/O error`), jadi `muatSesi()` pertama setelah aplikasi dibuka
+  memulihkan sesi dari berkas itu; Keluar dan balasan 401 mengosongkannya. Setelah masuk, Profil membaca
+  `/api/mobile/saya` dan `/saya/laporan`, dan Lapor mengirim dengan Bearer token tanpa captcha (kecuali anonim).
 - **Suka** (Detail): `POST`/`DELETE /api/mobile/laporan/{id}/suka`; tab *Disukai* di Profil dari `/saya/disukai`.
   Tamu diminta masuk dulu.
-- **Video** (Detail dan layar penuh): paket lokal `paket/video` (MediaPlayer di TextureView, Kotlin
-  `paket/video/android/Video.kt`). Diputar langsung dari `https://fire.nusantara.earth/media/…`, karena tumpukan
-  jaringan Android menolak HTTP polos ke mock-server. Ketuk tengah = jeda/putar, tombol speaker = bisu.
+- **Video**: paket lokal `paket/video` (MediaPlayer di TextureView, Kotlin `paket/video/android/Video.kt`), diputar
+  langsung dari `https://fire.nusantara.earth/media/…` karena tumpukan jaringan Android menolak HTTP polos ke
+  mock-server. Kartu sorotan Beranda memutar video laporannya tanpa suara selama Beranda tampil (tombol suara di
+  kanan atas). Di Detail dan layar penuh (`PemutarVideo`): ketuk video = kontrol gaya Netflix seperti aslinya
+  (mundur/maju 10 detik, putar/jeda, penggeser posisi dan waktu), hilang sendiri setelah 3 detik berjalan; tanpa
+  kontrol hanya garis tipis posisi.
+- **Kamera** (Lapor → Ambil foto): `@exact/camera` di atas `@exact/media-capture` (CameraX). Jendela bidik penuh,
+  bingkai bidik dan pesan keselamatan, lampu kilat, balik kamera depan/belakang, rana; setiap foto
+  (`app:/tmp/camera/N.jpg`) langsung jadi lampiran, foto terakhir tampil di kiri bawah, Selesai kembali ke formulir.
+  Izin kamera diminta saat pertama dibuka (grant `device.camera kameraAlasan` di inti Rust).
 - **Peta**: halaman `https://laporin.app/id/embed` di WebView, lewat paket lokal `paket/web` (tag `web-halaman`,
   Kotlin `paket/web/android/Web.kt`). Chip *Ringkasan hotspot* tetap menampilkan olahan Rust dari geoplatform.
 - Setelah mengubah `paket/` atau `node_modules`, hapus `target/android` sebelum `bun exact.mjs android`: build
@@ -75,11 +85,16 @@ belum bisa sama:
 
 - Tampilan digambar ke Canvas; yang berupa View asli hanya kolom teks, bilah, dialog, menu, WebView peta.
 - Gambar hanya JPEG/PNG/SVG: sampul memakai `/_next/image` (membalas JPEG), bukan WebP.
-- Video diputar di Detail dan layar penuh saja (kartu Beranda tetap sampul + pil senyap), tanpa penggeser waktu.
-  Kamera belum ada (Ambil foto membuka galeri), media Detail digeser dengan ketuk kiri/kanan (scroll-snap belum
-  dibaca), siaran live (LiveKit) belum ada.
+- Penggeser posisi video menerima ketukan saja (jempolnya melompat ke titik yang diketuk); menyeret belum bisa,
+  karena `range` di host Android hanya membaca tekanan. Video sorotan tetap berjalan bila Beranda digulir melewati
+  kartunya (aslinya berhenti). Layar penuh memutar video dari awal.
+- Kamera hanya FOTO: mode VIDEO dan LIVE belum ada; ketuk-untuk-fokus dan cubit-zoom belum ada di Android (view
+  native hanya menerima klik). `object-fit` belum sampai ke view kamera native, jadi jendela bidik dibuat 3:4
+  setinggi layar dan dipotong di tengah.
+- Media Detail digeser dengan ketuk kiri/kanan (scroll-snap belum dibaca), siaran live (LiveKit) belum ada.
 - Ikon status bar Android mengikuti skema aplikasi, jadi strip status bar di Detail tetap terang (aslinya gelap).
 - Masuk Google belum ada (`@exact/sign-in` belum punya implementasi Android); email dan Masuk uji ke mock-server.
-- Sesi masuk hilang setiap kali APK dipasang ulang (`bun exact.mjs android`), padahal token di mock-server masih
-  berlaku: rahasia `secret.keep` tidak terbawa pembaruan APK. Penyebabnya di host Android Exact belum dipastikan.
+- `secret.keep` tidak tersimpan ke disk di Android (kunci berkasnya gagal); sesi bertahan lewat `app:/data/sesi.json`.
+  Daftar kamera (`enumerateDevices`) dibaca saat boot sebelum modul native terikat (NotSupportedError), jadi
+  dibaca lagi setelah kamera terbuka.
 - APK masih build pengembangan (kunci debug, tanpa ikon peluncur).

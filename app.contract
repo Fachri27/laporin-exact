@@ -4,8 +4,10 @@
 // geoplatform.nusantara.earth, laporan dikirim ke server laporan (LAPORIN_API, mock-server laporin-apps)
 // dan salinannya di app:/data. Foto bukti dari galeri lewat @exact/photos. Akun (Masuk uji, email), suka
 // dan "Laporan saya" dari server laporan; peta dari laporin.app (WebView, paket lokal paket/web); video
-// diputar MediaPlayer (paket lokal paket/video).
+// diputar MediaPlayer (paket lokal paket/video); kamera Lapor dari @exact/camera di atas @exact/media-capture.
 
+use getUserMedia, applyConstraints, stopTrack, mediaStreamTrack, enumerateDevices, cameraStatus, MediaStream, MediaStreamTrack, MediaDeviceList, CameraStatus, MediaTrackConstraints from "@exact/media-capture"
+use takePhoto, Photo from "@exact/camera"
 use photoAssets, photoLibraryStatus, copyPhotoAsset, PhotoAssetList, PhotoLibraryStatus, PhotoCopy from "@exact/photos"
 use getCurrentPosition, GeolocationPosition from "@exact/geolocation"
 
@@ -24,6 +26,7 @@ routes nav
     cari "/cari"
     lapor "/lapor"
     galeri "/galeri"
+    kamera "/kamera"
     terkirim "/terkirim"
     pengaturan "/pengaturan"
   tab peta "/peta"
@@ -159,6 +162,10 @@ fn sukaDari(id: string, server: string[], tambah: string[], batal: string[]): bo
 // Angka suka di Detail: angka umpan ditambah/dikurangi suka dari HP ini sejak umpan dimuat.
 fn jumlahSuka(n: number, awal: bool, kini: bool): number = kini and n < 1 ? 1 : n + (kini and not awal ? 1 : 0) - (awal and not kini and n > 0 ? 1 : 0)
 fn videoDari(l: Laporan, s: string): string = match parseNumber(s) { case some(n) => videoKe(l, n), case none => "" }
+fn videoPertama(l: Laporan): string = match first(l.galeriVideo.filter(v => v != "")) { case some(v) => v, case none => "" }
+fn angkaKe(xs: string[], i: number): number = match xs.at(i) { case some(x) => (match parseNumber(x) { case some(n) => n, case none => 0 }), case none => 0 }
+// 75000 ms → "1:15".
+fn jam(ms: number): string = `${floor(ms / 60000)}:${floor(ms / 1000) % 60 < 10 ? "0" : ""}${floor(ms / 1000) % 60}`
 fn alasanJudul(a: string): string = a == "palsu" ? "Informasi palsu" : a == "tidak-pantas" ? "Konten tidak pantas" : a == "kebencian" ? "Ujaran kebencian" : a == "spam" ? "Spam" : a == "bahaya" ? "Membahayakan orang" : "Lainnya"
 fn alasanPetunjuk(a: string): string = a == "palsu" ? "Atau bukan kejadian karhutla" : a == "tidak-pantas" ? "Kekerasan atau seksual" : a == "kebencian" ? "Pelecehan atau ancaman" : a == "spam" ? "Iklan atau penipuan" : a == "bahaya" ? "Atau membuka data pribadi" : "Jelaskan di kolom rincian"
 fn pengirimLabel(s: LaporanSaya): string = s.anonim ? "Dikirim sebagai anonim" : s.pengirim == "" ? "Dikirim tanpa nama" : `Dikirim sebagai ${s.pengirim}`
@@ -197,6 +204,12 @@ component Laporin
   state sukaTambah = []
   state sukaBatal = []
   state idSuka = ""
+  // Video kartu sorotan diputar tanpa suara sampai warga menyalakannya, seperti aslinya.
+  state bisuSorotan = true
+  // Kamera Lapor: trek video yang dipegang, kamera yang dipakai, dan lampu kilat untuk foto berikutnya.
+  state track = ""
+  state hadap = "environment"
+  state lampu = false
   resource waktu = exactTime() as shape Waktu
   resource viewport = exactViewport() as shape Viewport
   resource umpan = muatUmpan() as shape Umpan else empty()
@@ -206,8 +219,9 @@ component Laporin
   resource komentar = muatKomentar(idTerbuka) as shape Komentar[] else empty()
   mutation terkirim as shape Balasan refreshes saya, laporanAkun, sesi then setelahKirim
   resource sesi = muatSesi() as shape Sesi else empty()
-  resource laporanAkun = muatLaporanAkun() as shape LaporanAkun[] else empty()
-  resource disukai = muatDisukai() as shape string[] else empty()
+  // Bergantung pada email sesi: dimuat ulang begitu sesi dipulihkan dari app:/data/sesi.json saat aplikasi dibuka.
+  resource laporanAkun = muatLaporanAkun(sesi.email) as shape LaporanAkun[] else empty()
+  resource disukai = muatDisukai(sesi.email) as shape string[] else empty()
   mutation masuk as shape Balasan refreshes sesi, laporanAkun, disukai then setelahMasuk
   mutation keluarSesi as shape Balasan refreshes sesi, laporanAkun, disukai
   mutation sukaDikirim as shape Balasan refreshes sesi then setelahSuka
@@ -219,6 +233,19 @@ component Laporin
   // Daftar komentar dari LAPORIN_SITUS (mock) sudah memuat komentar yang baru dikirim: dimuat ulang setelah kirim.
   mutation komentarDikirim as shape Balasan refreshes komentar then setelahKomentar
   mutation dilaporkan as shape Balasan
+  resource statusKamera = cameraStatus() as shape CameraStatus else empty()
+  resource perangkatKamera = enumerateDevices() as shape MediaDeviceList else empty()
+  resource trekKamera = mediaStreamTrack(track=track) as shape MediaStreamTrack else empty()
+  mutation kameraDibuka as shape MediaStream then pasangTrek
+  mutation dijepret as shape Photo then setelahJepret
+  mutation kameraDisetel as shape MediaStreamTrack
+  mutation kameraDitutup as shape MediaStreamTrack
+  // Trek yang masih hidup dipakai lagi saat kamera dibuka lagi, bukan meminta yang baru.
+  derive memegangKamera = track != "" and trekKamera.readyState == "live"
+  derive bisaBalik = perangkatKamera.devices.map(d => d.facingMode == some("user")).includes(true) and perangkatKamera.devices.map(d => d.facingMode == some("environment")).includes(true)
+  derive hadapSaja = MediaTrackConstraints(deviceId=none, groupId=none, facingMode=some(hadap), width=none, height=none, aspectRatio=none, frameRate=none, resizeMode=none, zoom=none, torch=none, sampleRate=none, sampleSize=none, channelCount=none, echoCancellation=none, autoGainControl=none, noiseSuppression=none, latency=none)
+  derive galatKamera = match failure(kameraDibuka) { case some(f) => f.code, case none => "" }
+  derive galatJepret = match failure(dijepret) { case some(f) => f.code, case none => "" }
   derive adaLokasi = match lokasi { case some(p) => true, case none => false }
   derive latKini = match lokasi { case some(p) => p.coords.latitude, case none => 0 }
   derive lngKini = match lokasi { case some(p) => p.coords.longitude, case none => 0 }
@@ -238,9 +265,14 @@ component Laporin
   // Keyboard terbuka di HP potret: viewport menyusut di bawah ±1,6× lebarnya. Bilah bawah tidak ikut naik di atas
   // keyboard (aslinya tersembunyi di belakangnya), supaya isian yang sedang diketik tidak tertutup.
   derive papanKetik = viewport.width > 0 and viewport.width < 600 and viewport.height < viewport.width * 1.6
-  derive bilahTampil = not papanKetik and not ["lapor", "terkirim", "galeri", "foto", "komentar", "laporkan"].includes(top(nav).name)
+  derive bilahTampil = not papanKetik and not ["lapor", "terkirim", "galeri", "kamera", "foto", "komentar", "laporkan"].includes(top(nav).name)
+  // Video sorotan hanya berjalan selama Beranda tampil paling atas.
+  derive berandaAktif = nav.tab == "beranda" and top(nav).name == "beranda"
 
+  // Keluar dari kamera (tombol kembali HP) melepas kameranya.
   action back
+    if top(nav).name == "kamera" and track != ""
+      send kameraDitutup = stopTrack(track=track)
     nav = back(nav)
   action ikuti(url: string)
     nav = go(nav, url)
@@ -258,6 +290,49 @@ component Laporin
   action bukaGaleri
     batasGaleri = batasGaleri == 60 ? 61 : 60
     nav = push(nav, "/galeri")
+  // Ambil foto: jendela bidik layar penuh; setiap jepretan (app:/tmp/camera/N.jpg) langsung jadi lampiran.
+  action bukaKamera
+    galat = ""
+    if not memegangKamera and not pending(kameraDibuka)
+      send kameraDibuka = getUserMedia(video=true, videoConstraints=hadapSaja)
+    nav = push(nav, "/kamera")
+  // Daftar kamera dibaca lagi setelah kamera terbuka: bacaan saat boot mendahului terikatnya modul native
+  // (NotSupportedError), seperti galeri.
+  action pasangTrek
+    match kameraDibuka
+      case some(m)
+        track = match m.tracks.at(0) { case some(t) => t.id, case none => "" }
+      case none
+        track = track
+    refresh perangkatKamera
+  action balikKamera
+    send kameraDisetel = applyConstraints(track=track, facingMode=(hadap == "environment" ? "user" : "environment"))
+    hadap = hadap == "environment" ? "user" : "environment"
+  action gantiLampu
+    lampu = not lampu
+  action jepret
+    if track != "" and pilihan.length < 6 and not pending(dijepret)
+      send dijepret = takePhoto(track=track, android.flashMode=(lampu ? "on" : "off"))
+  action setelahJepret
+    match dijepret
+      case some(f)
+        if not pilihan.includes(f.path) and pilihan.length < 6
+          pilihan = pilihan.concat([f.path])
+          berkasFoto = berkasFoto.concat([f.path])
+          gambarFoto = gambarFoto.concat([f.path])
+      case none
+        galat = galat
+  action tutupKamera
+    if track != ""
+      send kameraDitutup = stopTrack(track=track)
+    nav = back(nav)
+  action kameraKeGaleri
+    if track != ""
+      send kameraDitutup = stopTrack(track=track)
+    batasGaleri = batasGaleri == 60 ? 61 : 60
+    nav = replace(nav, "/galeri")
+  action gantiBisuSorotan
+    bisuSorotan = not bisuSorotan
   action pilihFilter(f: string)
     filterCari = filterCari == f ? "semua" : f
     if f == "terdekat" and not adaLokasi and not pending(lokasi)
@@ -452,13 +527,14 @@ component Laporin
               // Detail dan Foto berlatar tinta sampai ke bawah status bar, seperti area media aslinya.
               column navigationKey=`${e.id}` navigationScroll=`isi-${e.id}` position="absolute" inset=0
                 display="flex" flex-direction="column"
-                background-color=(e.name == "laporan" or e.name == "foto" ? "media.tinta" : "latar.halaman")
+                background-color=(e.name == "laporan" or e.name == "foto" or e.name == "kamera" ? "media.tinta" : "latar.halaman")
                 if e.name == "beranda"
                   scroll id=`isi-${e.id}` flex=1 min-height=0
                     column padding-top=6 padding-bottom=120
                       Beranda(umpan=umpan, tampil=tampil, kisi=kisi, idSorotan=idSorotan, pulau=pulau, urutan=urutan,
                         memuat=pending(umpan), gagal=failed(umpan), pilihPulau=pilihPulau, urutkan=urutkan, muatUlang=muatUlang,
-                        gelap=(tema == "gelap"), bahasa=bahasa, gantiTema=gantiTema, gantiBahasa=gantiBahasa)
+                        gelap=(tema == "gelap"), bahasa=bahasa, gantiTema=gantiTema, gantiBahasa=gantiBahasa,
+                        putarSorotan=berandaAktif, bisuSorotan=bisuSorotan, gantiBisuSorotan=gantiBisuSorotan)
                 else if e.name == "peta"
                   // Peta laporin.app dibiarkan terpasang (display none) saat Ringkasan dipilih, supaya tidak dimuat ulang.
                   column flex=1 min-height=0
@@ -515,6 +591,12 @@ component Laporin
                 else if e.name == "galeri"
                   HalamanGaleri(galeri=galeri, status=statusFoto, memuat=pending(galeri), pilihan=pilihan, menyalin=pending(salinan),
                     pilihFoto=pilihFoto, muatUlang=muatUlangGaleri, kembali=back, idIsi=`isi-${e.id}`)
+                else if e.name == "kamera"
+                  HalamanKamera(track=track, status=statusKamera, membuka=pending(kameraDibuka), galatBuka=galatKamera,
+                    galatJepret=galatJepret, jumlah=pilihan.length,
+                    terakhir=(match gambarFoto.at(gambarFoto.length - 1) { case some(g) => g, case none => "" }),
+                    menjepret=pending(dijepret), lampu=lampu, bisaBalik=bisaBalik, jepret=jepret, balik=balikKamera,
+                    gantiLampu=gantiLampu, tutup=tutupKamera, keGaleri=kameraKeGaleri, bukaIzin=bukaIzin)
                 else if e.name == "pengaturan"
                   HalamanPengaturan(sesi=sesi, temaPaksa=(tema != ""), gelap=(tema == "gelap"), ikutiHp=ikutiTemaHp,
                     bukaIzin=bukaIzin, bukaSitus=bukaSitus, keluar=tanyaKeluar, kembali=back, idIsi=`isi-${e.id}`)
@@ -525,7 +607,7 @@ component Laporin
                 else if e.name == "lapor"
                   FormLapor(judul=judul, deskripsi=deskripsi, nama=nama, anonim=anonim, galat=galat, mengirim=pending(terkirim),
                     akun=(sesi.masuk ? sesi.nama : ""), pilihan=pilihan, gambarFoto=gambarFoto, menyalin=pending(salinan),
-                    hapusFoto=hapusFoto, bukaGaleri=bukaGaleri, lokasiAda=adaLokasi, lat=latKini, lng=lngKini, akurasi=akurasiKini,
+                    hapusFoto=hapusFoto, bukaKamera=bukaKamera, bukaGaleri=bukaGaleri, lokasiAda=adaLokasi, lat=latKini, lng=lngKini, akurasi=akurasiKini,
                     mencariLokasi=pending(lokasi), gagalLokasi=failed(lokasi), perbaruiLokasi=perbaruiLokasi,
                     ubahJudul=ubahJudul, ubahDeskripsi=ubahDeskripsi, ubahNama=ubahNama, ubahAnonim=ubahAnonim,
                     kirim=kirim, kembali=back, idIsi=`isi-${e.id}`)
@@ -663,6 +745,9 @@ component Beranda
     bahasa: string
     gantiTema: action
     gantiBahasa: action
+    putarSorotan: bool
+    bisuSorotan: bool
+    gantiBisuSorotan: action
   view
     column
       // Kepala: titik status + LAPORIN, lalu cari, tema dan bahasa (TombolIkon 44 px).
@@ -693,7 +778,7 @@ component Beranda
       // Kartu sorotan: laporan pertama yang punya foto.
       if idSorotan != ""
         for l in tampil.filter(x => x.id == idSorotan) key=l.id
-          KartuSorotan(lap=l)
+          KartuSorotan(lap=l, video=videoPertama(l), putar=putarSorotan, bisu=bisuSorotan, gantiBisu=gantiBisuSorotan)
       else
         column margin="12px 16px 0" min-height=260 border-radius=28 background-color="latar.permukaan"
           align-items="center" justify-content="center" gap=12 padding="0 28px"
@@ -731,34 +816,53 @@ component Beranda
           text "Paling disukai"
       KisiUndak(daftar=kisi)
 
+// Kartu sorotan: video laporan diputar otomatis tanpa suara selama Beranda tampil (sampul menutupinya sampai bingkai
+// pertama), tombol suara di kanan atas, seperti aslinya.
 component KartuSorotan
   props
     lap: Laporan
+    video: string
+    putar: bool
+    bisu: bool
+    gantiBisu: action
+  state bingkai = false
+  action pesan(v: string)
+    if v == "main"
+      bingkai = true
   view
-    link href=path("laporan", lap.id) testId="sorotan" margin="12px 16px 0" display="block"
-      column position="relative" height="clamp(380px, 115vw, 560px)" border-radius=28 overflow="hidden"
-        background-color="media.kartu"
-        image lap.sampul alt=lap.judul position="absolute" inset=0 width="100%" height="100%" object-fit="cover"
-        row position="absolute" top=16 left=16 right=16 justify-content="space-between" align-items="center"
-          Pil(label=lap.tempat)
-          // Video di aslinya diputar tanpa suara dengan tombol suara; Exact Android belum memutar video.
-          if lap.adaVideo
-            box width=36 height=30 border-radius=10 background-color="media.tinta" color="media.teks" display="flex"
-              align-items="center" justify-content="center" font-size=14
-              image "symbol:icon.senyap"
-        column position="absolute" left=0 right=0 bottom=0 min-height=124 padding="14px 18px 16px" gap=8
-          background-color="media.pita"
-          text lap.judul font-size=20 line-height=1.3 font-weight=700 color="media.teks" line-clamp=3 testId="judul-sorotan"
-          row align-items="center" gap=16 color="media.teks"
-            text lap.kredit font-size=13 font-weight=600 flex=1 min-width=0 line-clamp=1
-            row align-items="center" gap=6 font-size=18
-              image "symbol:heart"
-              if lap.suka > 0
-                text hitung(lap.suka) font-size=13 font-weight=600
-            row align-items="center" gap=6 font-size=17
-              image "symbol:icon.komentar"
-              if lap.komentar > 0
-                text hitung(lap.komentar) font-size=13 font-weight=600
+    box position="relative" margin="12px 16px 0"
+      link href=path("laporan", lap.id) testId="sorotan" display="block"
+        column position="relative" height="clamp(380px, 115vw, 560px)" border-radius=28 overflow="hidden"
+          background-color="media.kartu"
+          if video != ""
+            video-putar sumber=video bisu=bisu putar=putar pas="cover" message=pesan position="absolute" inset=0
+              width="100%" height="100%" aria-label="Video sorotan" testId="video-sorotan"
+          if video == "" or not bingkai
+            image lap.sampul alt=lap.judul position="absolute" inset=0 width="100%" height="100%" object-fit="cover"
+          row position="absolute" top=16 left=16 right=16 justify-content="space-between" align-items="center"
+            Pil(label=lap.tempat)
+            if lap.adaVideo and video == ""
+              box width=36 height=30 border-radius=10 background-color="media.tinta" color="media.teks" display="flex"
+                align-items="center" justify-content="center" font-size=14
+                image "symbol:icon.senyap"
+          column position="absolute" left=0 right=0 bottom=0 min-height=124 padding="14px 18px 16px" gap=8
+            background-color="media.pita"
+            text lap.judul font-size=20 line-height=1.3 font-weight=700 color="media.teks" line-clamp=3 testId="judul-sorotan"
+            row align-items="center" gap=16 color="media.teks"
+              text lap.kredit font-size=13 font-weight=600 flex=1 min-width=0 line-clamp=1
+              row align-items="center" gap=6 font-size=18
+                image "symbol:heart"
+                if lap.suka > 0
+                  text hitung(lap.suka) font-size=13 font-weight=600
+              row align-items="center" gap=6 font-size=17
+                image "symbol:icon.komentar"
+                if lap.komentar > 0
+                  text hitung(lap.komentar) font-size=13 font-weight=600
+      if video != ""
+        button press=gantiBisu aria-label=(bisu ? "Nyalakan suara video" : "Matikan suara video") testId="sorotan-suara"
+          position="absolute" top=16 right=16 width=36 height=30 border-radius=10 padding=0 display="flex"
+          align-items="center" justify-content="center" background-color="media.tinta" color="media.teks" font-size=14
+          image (bisu ? "symbol:icon.senyap" : "symbol:speaker")
 
 // KisiUndak laporin-apps: dua kolom berundak; tinggi sampul bergiliran [220,170,190,250,160,230] × lebar/174.
 component KisiUndak
@@ -812,32 +916,17 @@ component DetailLaporan
     disukai: bool
     jumlahSuka: number
     suka: action
-  // Penggeser media: ketuk sisi kanan/kiri untuk maju/mundur (Exact belum membaca scroll-snap); ketuk tengah video
-  // untuk jeda/putar. Suara menyala seperti aslinya; sampul menutupi video sampai bingkai pertamanya tampil.
+  // Penggeser media: ketuk sisi kanan/kiri untuk maju/mundur (Exact belum membaca scroll-snap). Video diputar
+  // PemutarVideo dengan suara menyala seperti aslinya.
   state indeks = 0
   state bisu = false
-  state jeda = false
-  state bingkai = false
-  state galatVideo = false
   derive video = videoKe(lap, indeks)
   action maju
     indeks = indeks + 1 < lap.galeri.length ? indeks + 1 : indeks
-    lepasVideo()
   action mundur
     indeks = indeks > 0 ? indeks - 1 : 0
-    lepasVideo()
-  action lepasVideo
-    jeda = false
-    bingkai = false
-    galatVideo = false
   action gantiBisu
     bisu = not bisu
-  action gantiJeda
-    jeda = not jeda
-  action pesanVideo(v: string)
-    if v == "main" or v == "jeda"
-      bingkai = true
-    galatVideo = v.startsWith("galat")
   action bagikan
     share(title=lap.judul, text=lap.judul, url=`https://fire.nusantara.earth/id/fire/${lap.slug}`)
   view
@@ -846,31 +935,21 @@ component DetailLaporan
         column position="relative" height="56vw"
           if lap.galeri.length == 0 and lap.sampul != ""
             image lap.sampul alt=lap.judul position="absolute" inset=0 width="100%" height="100%" object-fit="cover"
-          for g, i in lap.galeri key=g
-            if i == indeks and not (video != "" and bingkai)
-              image g alt=lap.judul position="absolute" inset=0 width="100%" height="100%" object-fit="cover"
           if video != ""
-            video-putar sumber=video bisu=bisu putar=(aktif and not jeda) pas="contain" message=pesanVideo
-              position="absolute" inset=0 width="100%" height="100%" aria-label="Video laporan" testId="video-detail"
-          if lap.galeri.length > 1 or video != ""
-            row position="absolute" inset=0
-              if lap.galeri.length > 1
+            // Kunci = alamat video: pindah media memasang pemutar baru, dengan kontrol dan posisinya sendiri.
+            for v in [video] key=v
+              PemutarVideo(sumber=v, sampul=gambarKe(lap, `${indeks}`), aktif=aktif, bisu=bisu, pas="contain",
+                adaSebelum=(lap.galeri.length > 1), adaSesudah=(lap.galeri.length > 1), sebelum=mundur, sesudah=maju)
+          else
+            for g, i in lap.galeri key=g
+              if i == indeks
+                image g alt=lap.judul position="absolute" inset=0 width="100%" height="100%" object-fit="cover"
+            if lap.galeri.length > 1
+              row position="absolute" inset=0
                 button press=mundur aria-label="Media sebelumnya" testId="media-mundur" flex=1 height="100%" padding=0
                   background-color="transparent"
-              if video != ""
-                button press=gantiJeda aria-label=(jeda ? "Putar video" : "Jeda video") testId="video-ketuk" flex=2
-                  height="100%" padding=0 display="flex" align-items="center" justify-content="center"
-                  background-color="transparent"
-                  if jeda or galatVideo
-                    box width=64 height=64 border-radius=32 display="flex" align-items="center" justify-content="center"
-                      background-color="media.teks" color="media.tinta" font-size=28
-                      image "symbol:play-fill"
-              if lap.galeri.length > 1
                 button press=maju aria-label="Media berikutnya" testId="media-maju" flex=1 height="100%" padding=0
                   background-color="transparent"
-          if galatVideo
-            text "Video tidak bisa diputar. Ketuk untuk mencoba lagi." position="absolute" left=12 right=12 bottom=10
-              font-size=12 color="media.teks" text-align="center" testId="video-galat"
           row position="absolute" top=8 left=8 right=12 align-items="center" justify-content="space-between"
             button press=kembali aria-label="Kembali" testId="kembali" width=44 height=44 border-radius=22
               display="flex" align-items="center" justify-content="center" background-color="media.kaca"
@@ -954,6 +1033,143 @@ component DetailLaporan
             text "LAPORAN SERUPA" font-size=11 font-weight=600 letter-spacing=0.7 padding="10px 14px" border-radius=18
               background-color="chip.aktif" color="chip.di-aktif"
           KisiUndak(daftar=serupa)
+
+// Pemutar video laporan (Detail dan layar penuh) dengan kontrol gaya Netflix seperti KontrolVideo aslinya: ketuk video
+// = kontrol muncul (mundur/maju 10 detik, putar/jeda, penggeser posisi, waktu), hilang sendiri setelah video berjalan
+// 3 detik tanpa disentuh; tanpa kontrol hanya garis tipis posisi, dan ketuk sisi kiri/kanan berpindah media. Sampul
+// menutupi video sampai bingkai pertamanya tampil; video yang gagal dimuat ulang dengan ketukan.
+component PemutarVideo
+  props
+    sumber: string
+    sampul: string
+    aktif: bool
+    bisu: bool
+    pas: string
+    adaSebelum: bool
+    adaSesudah: bool
+    sebelum: action
+    sesudah: action
+  state jeda = false
+  state bingkai = false
+  state galat = false
+  state coba = 0
+  state kontrol = false
+  // Posisi dan durasi dalam ms dari pesan "waktu" pemutar; `sentuh` = posisi saat kontrol terakhir disentuh.
+  state posisi = 0
+  state durasi = 0
+  state sentuh = 0
+  // Lompatan (detik) dikirim ke pemutar setiap kali `lompatKe` naik.
+  state lompat = 0
+  state lompatKe = 0
+  state seret = false
+  state posSeret = 0
+  derive persen = durasi > 0 ? min(100, posisi * 100 / durasi) : 0
+  action pesan(v: string)
+    if v.startsWith("waktu ")
+      let p = angkaKe(v.split(" "), 1)
+      if p < sentuh
+        sentuh = p
+      posisi = p
+      durasi = angkaKe(v.split(" "), 2)
+      if kontrol and not seret and not jeda and p - sentuh >= 3000
+        kontrol = false
+    else
+      if v == "main" or v == "jeda"
+        bingkai = true
+      galat = v.startsWith("galat")
+  action tampilkan
+    kontrol = true
+    sentuh = posisi
+  action sembunyikan
+    kontrol = false
+  action gantiJeda
+    jeda = not jeda
+    sentuh = posisi
+  action cobaLagi
+    galat = false
+    bingkai = false
+    jeda = false
+    coba = coba + 1
+  action geser(detik: number)
+    let ke = max(0, min(durasi / 1000, posisi / 1000 + detik))
+    lompat = ke
+    lompatKe = lompatKe + 1
+    posisi = ke * 1000
+    sentuh = ke * 1000
+  action seretKe(v: number)
+    seret = true
+    posSeret = v
+  action lepasKe(v: number)
+    seret = false
+    lompat = v
+    lompatKe = lompatKe + 1
+    posisi = v * 1000
+    sentuh = v * 1000
+  view
+    column position="absolute" inset=0
+      if sampul != "" and not bingkai
+        image sampul alt="Sampul video" position="absolute" inset=0 width="100%" height="100%" object-fit=pas
+      // Coba lagi = pemutar baru (kunci baru), yang memuat sumbernya dari awal.
+      for k in [`${coba}`] key=k
+        video-putar sumber=sumber bisu=bisu putar=(aktif and not jeda) pas=pas lompat=lompat lompatKe=lompatKe
+          message=pesan position="absolute" inset=0 width="100%" height="100%" aria-label="Video laporan" testId="video"
+      if galat
+        button press=cobaLagi aria-label="Muat ulang video" testId="video-galat" position="absolute" inset=0 padding=0
+          display="flex" flex-direction="column" align-items="center" justify-content="center" gap=10
+          background-color="media.redam" color="media.teks"
+          box font-size=26
+            image "symbol:refresh"
+          text "Video tidak bisa diputar. Ketuk untuk mencoba lagi." font-size=12.5 text-align="center"
+      else if not kontrol
+        row position="absolute" inset=0
+          if adaSebelum
+            button press=sebelum aria-label="Media sebelumnya" testId="media-mundur" flex=1 height="100%" padding=0
+              background-color="transparent"
+          button press=tampilkan aria-label="Kontrol video" testId="video-ketuk" flex=2 height="100%" padding=0
+            display="flex" align-items="center" justify-content="center" background-color="transparent"
+            if jeda
+              box width=64 height=64 border-radius=32 display="flex" align-items="center" justify-content="center"
+                background-color="media.teks" color="media.tinta" font-size=28
+                image "symbol:play-fill"
+          if adaSesudah
+            button press=sesudah aria-label="Media berikutnya" testId="media-maju" flex=1 height="100%" padding=0
+              background-color="transparent"
+        box position="absolute" left=0 right=0 bottom=0 height=2 background-color="media.garis"
+          box width=`${persen}%` height="100%" background-color="aksen.isi"
+      else
+        button press=sembunyikan aria-label="Sembunyikan kontrol" testId="video-sembunyi" position="absolute" inset=0
+          padding=0 background-color="media.redam"
+        row position="absolute" inset=0 align-items="center" justify-content="center" gap=44
+          button press=geser(-10) aria-label="Mundur 10 detik" testId="video-mundur" width=52 height=52 padding=0
+            display="flex" align-items="center" justify-content="center" background-color="transparent"
+            color="media.teks"
+            LambangLompat(ikon="symbol:icon.mundur")
+          button press=gantiJeda aria-label=(jeda ? "Putar" : "Jeda") testId="video-jeda" width=64 height=64
+            border-radius=32 padding=0 display="flex" align-items="center" justify-content="center"
+            background-color="media.teks" color="media.tinta" font-size=28
+            image (jeda ? "symbol:play-fill" : "symbol:pause-fill")
+          button press=geser(10) aria-label="Maju 10 detik" testId="video-maju" width=52 height=52 padding=0
+            display="flex" align-items="center" justify-content="center" background-color="transparent"
+            color="media.teks"
+            LambangLompat(ikon="symbol:icon.maju")
+        row position="absolute" left=14 right=12 bottom=1 align-items="center" gap=10 color="media.teks"
+          text jam(seret ? posSeret * 1000 : posisi) font-size=11 font-weight=600 min-width=34
+            font-variant-numeric="tabular-nums" testId="video-waktu"
+          input type="range" min=0 max=max(1, durasi / 1000) step=0.1 value=(seret ? posSeret : posisi / 1000)
+            input=seretKe change=lepasKe aria-label=`Posisi ${jam(posisi)} dari ${jam(durasi)}` testId="video-posisi"
+            accent-color="aksen.isi" flex=1 min-width=0 height=44
+          text jam(durasi) font-size=11 font-weight=600 min-width=34 text-align="right"
+            font-variant-numeric="tabular-nums"
+
+// Ikon mundur/maju dengan angka 10 di tengah lingkarannya.
+component LambangLompat
+  props
+    ikon: string
+  view
+    box position="relative" width=34 height=34 display="flex" align-items="center" justify-content="center"
+      box position="absolute" inset=0 font-size=34 display="flex"
+        image ikon
+      text "10" font-size=9.5 font-weight=700 padding-top=2
 
 component HalamanHotspot
   props
@@ -1462,6 +1678,7 @@ component FormLapor
     gambarFoto: string[]
     menyalin: bool
     hapusFoto: action
+    bukaKamera: action
     bukaGaleri: action
     lokasiAda: bool
     lat: number
@@ -1498,8 +1715,7 @@ component FormLapor
               placeholder="Contoh: Asap tebal dari arah timur sejak pukul 08.00, api terlihat di tepi kebun…"
               testId="deskripsi" border="none" background-color="transparent" font-size=14.5 line-height=1.45
               color="teks.utama"
-          // Lampiran: kisi tiga kolom, lalu kotak unggah bergaris putus-putus (kamera belum ada di Exact Android: keduanya
-          // membuka galeri).
+          // Lampiran: kisi tiga kolom, lalu kotak unggah bergaris putus-putus: Ambil foto membuka kamera, GALERI galeri HP.
           if pilihan.length > 0
             row flex-wrap="wrap" gap=8 testId="lampiran"
               for id, i in pilihan key=id
@@ -1512,7 +1728,7 @@ component FormLapor
                     justify-content="center" background-color="media.kaca" color="media.teks" font-size=12 padding=0
                     image "symbol:close"
           row min-height=70 border-radius=16 border="1px dashed garis.tegas" align-items="stretch" testId="kotak-unggah"
-            button press=bukaGaleri testId="ambil-foto" flex=1 display="flex" align-items="center" gap=14
+            button press=bukaKamera testId="ambil-foto" flex=1 display="flex" align-items="center" gap=14
               padding="12px 16px" background-color="transparent" color="teks.utama" text-align="left" font-size=21
               image "symbol:camera"
               column gap=3 flex=1 min-width=0
@@ -1645,6 +1861,134 @@ component KartuLokasi
           button press=perbarui testId="coba-lokasi" padding=0 background-color="transparent" color="aksen.teks"
             text "Coba lagi" font-size=13 font-weight=700
 
+// Kamera Lapor seperti layar kamera aslinya: jendela bidik penuh, kepala (tutup · LAPORAN BARU), bingkai bidik bersudut
+// dengan pesan keselamatan, lampu dan balik kamera di kanan, lalu baris rana: foto terakhir (atau unggah dari galeri),
+// rana, Selesai. Mode video dan Live belum ada: hanya FOTO.
+component HalamanKamera
+  props
+    track: string
+    status: CameraStatus
+    membuka: bool
+    galatBuka: string
+    galatJepret: string
+    jumlah: number
+    terakhir: string
+    menjepret: bool
+    lampu: bool
+    bisaBalik: bool
+    jepret: action
+    balik: action
+    gantiLampu: action
+    tutup: action
+    keGaleri: action
+    bukaIzin: action
+  derive ditolak = status.state == "denied" or galatBuka == "NotAllowedError"
+  view
+    column flex=1 min-height=0 position="relative" background-color="media.tinta" color="media.teks"
+      // Pratinjau kamera 3:4 digambar utuh (object-fit belum sampai ke view native Android): dibuat setinggi layar
+      // dan selebar 3/4 tingginya, di tengah, sisi yang berlebih terpotong — sama dengan `cover`.
+      if track != ""
+        row position="absolute" inset=0 justify-content="center" overflow="hidden"
+          exact-camera srcObject=track object-fit="cover" height="100%" aspect-ratio="3 / 4" flex-shrink=0
+            aria-label="Jendela bidik" testId="jendela-bidik"
+        // Bayangan atas dan bawah supaya kepala dan baris rana terbaca di atas pemandangan terang.
+        box position="absolute" top=0 left=0 right=0 height=140
+          background-image="linear-gradient(180deg, media.redam 0%, transparent 100%)"
+        box position="absolute" bottom=0 left=0 right=0 height=280
+          background-image="linear-gradient(0deg, media.kaca 0%, transparent 100%)"
+      if ditolak or galatBuka != ""
+        column position="absolute" inset=0 align-items="center" justify-content="center" gap=16 padding="0 36px"
+          box font-size=30
+            image "symbol:camera"
+          text (ditolak ? "Izin kamera ditolak. Izinkan kamera untuk Laporin di Pengaturan HP, atau unggah dari galeri." : `Kamera tidak bisa dibuka (${galatBuka}). Unggah dari galeri sebagai gantinya.`)
+            font-size=13.5 line-height=1.48 text-align="center" testId="kamera-galat"
+          if ditolak
+            button press=bukaIzin testId="kamera-izin" height=44 padding="0 20px" border-radius=22
+              background-color="media.teks" color="media.tinta" display="flex" align-items="center"
+              text "Buka Pengaturan" font-size=14 font-weight=700
+      else if track == "" or membuka
+        column position="absolute" inset=0 align-items="center" justify-content="center"
+          progress aria-label="Membuka kamera"
+      else
+        column position="absolute" left=0 right=0 top="24%" align-items="center" gap=16
+          box position="relative" width=230 height=230
+            box position="absolute" top=0 left=0 width=28 height=28 border-top="2px solid media.teks"
+              border-left="2px solid media.teks"
+            box position="absolute" top=0 right=0 width=28 height=28 border-top="2px solid media.teks"
+              border-right="2px solid media.teks"
+            box position="absolute" bottom=0 left=0 width=28 height=28 border-bottom="2px solid media.teks"
+              border-left="2px solid media.teks"
+            box position="absolute" bottom=0 right=0 width=28 height=28 border-bottom="2px solid media.teks"
+              border-right="2px solid media.teks"
+            box position="absolute" top=114 left=105 width=20 height=2 background-color="media.redup"
+            box position="absolute" top=105 left=114 width=2 height=20 background-color="media.redup"
+          text "Jaga jarak aman. Jangan masuk area kebakaran untuk merekam." font-size=12 line-height=1.45
+            text-align="center" max-width=250 padding="6px 12px" border-radius=12 background-color="media.kaca"
+      row position="absolute" top=8 left=16 right=16 align-items="center" justify-content="space-between"
+        button press=tutup aria-label="Tutup kamera" testId="tutup-kamera" width=44 height=44 border-radius=22
+          padding=0 display="flex" align-items="center" justify-content="center" background-color="media.kaca"
+          color="media.teks" font-size=19
+          image "symbol:close"
+        text "LAPORAN BARU" font-size=12 font-weight=700 letter-spacing=1.4
+        box width=44 height=44
+      column position="absolute" right=14 top="40%" gap=16 align-items="center"
+        TombolAlat(ikon="symbol:icon.lampu", label="LAMPU", aktif=lampu, tekan=gantiLampu, uji="kamera-lampu")
+        if bisaBalik
+          TombolAlat(ikon="symbol:icon.balik", label="BALIK", aktif=false, tekan=balik, uji="kamera-balik")
+      column position="absolute" left=0 right=0 bottom=0 padding="0 28px calc(env(safe-area-inset-bottom) + 26px)" gap=16
+        align-items="center"
+        if galatJepret != ""
+          text `Foto gagal diambil (${galatJepret}). Coba lagi.` font-size=12.5 padding="8px 14px" border-radius=14
+            background-color="media.kaca" color="status.bahaya" testId="jepret-galat"
+        else if jumlah >= 6
+          text "Sudah 6 berkas — batas per laporan." font-size=12.5 padding="8px 14px" border-radius=14
+            background-color="media.kaca"
+        column align-items="center" gap=4
+          text "FOTO" font-size=12 font-weight=700 letter-spacing=1.2 color="aksen.isi"
+          box width=5 height=5 border-radius=3 background-color="aksen.isi"
+        row width="100%" align-items="center" justify-content="space-between"
+          column width=72 align-items="center" gap=6
+            if jumlah > 0 and terakhir != ""
+              button press=tutup aria-label="Lihat berkas laporan" testId="kamera-terakhir" width=52 height=52
+                border-radius=14 padding=0 overflow="hidden" position="relative" border="2px solid media.teks"
+                background-color="media.kaca"
+                image terakhir alt="Foto terakhir" width="100%" height="100%" object-fit="cover"
+                box position="absolute" top=3 right=3 min-width=18 height=18 border-radius=9 padding="0 4px"
+                  display="flex" align-items="center" justify-content="center" background-color="aksen.isi"
+                  color="aksen.di"
+                  text `${jumlah}` font-size=10.5 font-weight=700
+            else
+              button press=keGaleri aria-label="Unggah dari galeri" testId="kamera-galeri" width=52 height=52
+                border-radius=14 padding=0 display="flex" align-items="center" justify-content="center"
+                background-color="media.kaca" color="media.teks" font-size=21
+                image "symbol:icon.gambar"
+              text "UNGGAH" font-size=10 font-weight=600 letter-spacing=0.6
+          button press=jepret disabled=(track == "" or menjepret or jumlah >= 6) aria-label="Ambil foto" testId="rana"
+            width=80 height=80 min-width=80 min-height=80 flex-shrink=0 border-radius="50%" padding=5
+            border="4px solid media.teks" background-color="transparent" display="flex" align-items="center"
+            justify-content="center" opacity=(track == "" or jumlah >= 6 ? 0.4 : 1)
+            box width=62 height=62 border-radius="50%" background-color=(menjepret ? "media.redup" : "media.teks")
+          column width=72 align-items="center"
+            button press=tutup testId="kamera-selesai" height=40 padding="0 16px" border-radius=20
+              display="flex" align-items="center" background-color="media.teks" color="media.tinta"
+              text "Selesai" font-size=13 font-weight=700
+
+component TombolAlat
+  props
+    ikon: string
+    label: string
+    aktif: bool
+    tekan: action
+    uji: string
+  view
+    column align-items="center" gap=5
+      button press=tekan aria-label=label aria-pressed=aktif testId=uji width=46 height=46 border-radius=23 padding=0
+        display="flex" align-items="center" justify-content="center" font-size=20
+        background-color=(aktif ? "aksen.isi" : "media.kaca") color=(aktif ? "aksen.di" : "media.teks")
+        image ikon
+      text label font-size=9.5 font-weight=600 letter-spacing=0.6 padding="1px 6px" border-radius=6
+        background-color="media.redam"
+
 component HalamanGaleri
   props
     galeri: PhotoAssetList
@@ -1757,21 +2101,12 @@ component HalamanFoto
     gambar: string
     video: string
     kembali: action
-  state jeda = false
-  action gantiJeda
-    jeda = not jeda
   view
     column flex=1 min-height=0 position="relative" background-color="media.tinta"
       if video != ""
-        video-putar sumber=video bisu=false putar=(not jeda) pas="contain" flex=1 min-height=0 width="100%"
-          aria-label="Video laporan" testId="video-penuh"
-        button press=gantiJeda aria-label=(jeda ? "Putar video" : "Jeda video") testId="video-penuh-ketuk"
-          position="absolute" inset=0 padding=0 display="flex" align-items="center" justify-content="center"
-          background-color="transparent"
-          if jeda
-            box width=64 height=64 border-radius=32 display="flex" align-items="center" justify-content="center"
-              background-color="media.teks" color="media.tinta" font-size=28
-              image "symbol:play-fill"
+        column flex=1 min-height=0 position="relative" padding-bottom="env(safe-area-inset-bottom)"
+          PemutarVideo(sumber=video, sampul=gambar, aktif=true, bisu=false, pas="contain", adaSebelum=false,
+            adaSesudah=false, sebelum=kembali, sesudah=kembali)
       else
         image gambar alt="Foto laporan" flex=1 min-height=0 width="100%" object-fit="contain"
       button press=kembali aria-label="Tutup layar penuh" testId="tutup-foto" position="absolute" top=8 right=12

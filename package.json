@@ -6,7 +6,9 @@
     "start": "bun exact.mjs serve dist"
   },
   "dependencies": {
+    "@exact/camera": "file:../exact/packages/camera",
     "@exact/geolocation": "file:../exact/packages/geolocation",
+    "@exact/media-capture": "file:../exact/packages/media-capture",
     "@exact/photos": "file:../exact/packages/photos",
     "@laporin/video": "file:./paket/video",
     "@laporin/web": "file:./paket/web"
