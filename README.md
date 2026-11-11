@@ -220,8 +220,9 @@ credentials.json › Download credentials from EAS to credentials.json; skrip me
 `../laporin-apps/credentials.json` (diabaikan git), sisanya ditanyakan di terminal.
 
 ```sh
-sh tools/rilis-play.sh            # build AAB saja
-sh tools/rilis-play.sh --kirim    # build lalu unggah ke Play (internal, draft)
+sh tools/rilis-play.sh                # build AAB saja
+sh tools/rilis-play.sh --kirim        # build lalu unggah ke Play (internal, draft)
+sh tools/rilis-play.sh --kirim-saja   # unggah AAB yang sudah dibuild, tanpa build ulang
 ```
 
 Dengan `--kirim`, versionCode dicek dulu terhadap EAS (`build:version:get`; harus lebih besar), lalu
