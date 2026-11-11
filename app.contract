@@ -231,6 +231,13 @@ fn sampulDari(url: string, urls: string[], lokal: string[]): string = urls.index
 // Letak media i di penggeser Detail yang berputar (n media, k tampil): 0 tampil, 1 kanan, -1 kiri, 9 tak dipasang.
 // Dua media: tetangga yang sama ada di sisi arah geseran, dan saat diam di sisi yang baru ditinggalkan (arah 1 = maju).
 fn letakMedia(i: number, k: number, n: number, geser: number, arah: number): number = i == k ? 0 : n == 2 ? (geser < 0 ? 1 : geser > 0 ? -1 : 0 - arah) : (i - k + n) % n == 1 ? 1 : (k - i + n) % n == 1 ? -1 : 9
+// Media i paling jauh satu letak dari letaknya saat indeks `dari`: hanya itu yang dianimasikan. Media yang baru dipasang
+// (dulu 9) atau melompat ke sisi lain karena putaran langsung ditempatkan, tidak melintas di depan media yang tampil.
+fn mediaMelangkah(i: number, k: number, dari: number, n: number, arah: number): bool = letakMedia(i, dari, n, 0, arah) != 9 and mutlak(letakMedia(i, k, n, 0, arah) - letakMedia(i, dari, n, 0, arah)) <= 1
+// Tinggi penggeser Detail seperti laporin-apps: setinggi media pertama (rasio lebar/tinggi, 0 = belum terukur: potret
+// 9:16 bila laporannya vertikal, selain itu 16:9), paling pendek 0,56× lebar, paling tinggi 58% layar.
+fn jepit(v: number, bawah: number, atas: number): number = v < bawah ? bawah : v > atas ? atas : v
+fn tinggiMediaDetail(lebar: number, rasio: number, vertikal: bool, layar: number): number = jepit(rasio > 0 ? lebar / rasio : vertikal ? lebar * 16 / 9 : lebar * 0.56, lebar * 0.56, layar > 0 ? layar * 0.58 : lebar * 1.25)
 fn hanyaAngka(v: string): string = v.split("").filter(c => "0123456789".includes(c)).join("")
 
 component Laporin
@@ -1317,7 +1324,7 @@ component Laporin
                   scroll id=`isi-${e.id}` flex=1 min-height=0 background-color="latar.halaman" scrollbar-width="none"
                     for lap in umpan.laporan.filter(x => x.id == e.params.id) key=lap.id
                       // Video hanya diputar selama Detail ini paling atas (bukan di bawah Komentar atau Foto).
-                      DetailLaporan(lap=lap, serupa=umpan.laporan.filter(x => x.id != lap.id and x.tempat == lap.tempat).slice(0, 6),
+                      DetailLaporan(lap=lap, tinggiLayar=viewport.height, serupa=umpan.laporan.filter(x => x.id != lap.id and x.tempat == lap.tempat).slice(0, 6),
                         tersimpan=(sesi.masuk and simpanan.includes(lap.id)), simpan=toggleSimpan(lap.id), kembali=back,
                         laporkan=bukaLaporkan(lap.id), aktif=(e.id == top(nav).id), disukai=sukaDari(lap.id, disukai, sukaTambah, sukaBatal),
                         jumlahSuka=jumlahSuka(lap.suka, disukai.includes(lap.id), sukaDari(lap.id, disukai, sukaTambah, sukaBatal)),
@@ -1858,6 +1865,7 @@ component KartuUndak
 component DetailLaporan
   props
     lap: Laporan
+    tinggiLayar: number
     serupa: Laporan[]
     tersimpan: bool
     simpan: action
@@ -1877,20 +1885,32 @@ component DetailLaporan
   state menyeret = false
   state lebarMedia = 0
   state arah = 1
+  // Indeks sebelum perpindahan terakhir (disamakan saat mulai menyeret), untuk mediaMelangkah.
+  state dari = 0
+  // Rasio lebar/tinggi media pertama dari gambar ukur tak terlihat; 0 = belum termuat.
+  state rasio = 0
   derive video = videoKe(lap, indeks)
+  derive tinggiMedia = lebarMedia > 0 ? tinggiMediaDetail(lebarMedia, rasio, lap.vertikal, tinggiLayar) : 0
   derive banyak = lap.galeri.length > 1
   action maju
     if banyak
       arah = 1
+      dari = indeks
       indeks = (indeks + 1) % lap.galeri.length
   action mundur
     if banyak
       arah = -1
+      dari = indeks
       indeks = indeks > 0 ? indeks - 1 : lap.galeri.length - 1
+  action ukurRasio(w: number, h: number)
+    if w > 0 and h > 0
+      rasio = w / h
   action ukurMedia(w: number, h: number)
     lebarMedia = w
   action geserMedia(dx: number, dy: number)
     if banyak
+      if not menyeret
+        dari = indeks
       menyeret = true
       geser = geser + dx
   action lepasMedia(vx: number, vy: number)
@@ -1908,8 +1928,13 @@ component DetailLaporan
   view
     column padding-bottom=120
       column background-color="media.tinta"
-        column position="relative" height="56vw" overflow="hidden" resize=ukurMedia pan=geserMedia panrelease=lepasMedia
-          touch-action="pan-y" testId="penggeser-media"
+        column position="relative" height=(tinggiMedia > 0 ? `${tinggiMedia}px` : "56vw") overflow="hidden" resize=ukurMedia
+          pan=geserMedia panrelease=lepasMedia touch-action="pan-y" testId="penggeser-media"
+          // Gambar ukur: media pertama selebar penggeser dengan tinggi aslinya (alamat sama, jadi dari cache).
+          for g in (lap.galeri.length > 0 ? lap.galeri.slice(0, 1) : [lap.sampul]).filter(u => u != "") key=g
+            box position="absolute" left=0 top=0 width="100%" opacity=0 pointer-events="none" aria-hidden="true"
+              resize=ukurRasio
+              image g alt="" width="100%"
           if lap.galeri.length == 0 and lap.sampul != ""
             image lap.sampul alt=lap.judul position="absolute" inset=0 width="100%" height="100%" object-fit="cover"
           // Media ini dan kedua tetangganya (berputar: tetangga kanan media terakhir adalah yang pertama), berjajar
@@ -1918,7 +1943,7 @@ component DetailLaporan
             if i == indeks or (lebarMedia > 0 and letakMedia(i, indeks, lap.galeri.length, geser, arah) != 9)
               box position="absolute" inset=0
                 translate=`${letakMedia(i, indeks, lap.galeri.length, geser, arah) * lebarMedia + geser}px 0px`
-                transition=(menyeret ? "none" : "translate 280ms ease-out")
+                transition=(menyeret or not mediaMelangkah(i, indeks, dari, lap.galeri.length, arah) ? "none" : "translate 280ms ease-out")
                 if i == indeks and video != ""
                   // Kunci = alamat video: pindah media memasang pemutar baru, dengan kontrol dan posisinya sendiri.
                   for v in [video] key=v

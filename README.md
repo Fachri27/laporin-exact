@@ -245,7 +245,9 @@ belum bisa sama:
   setinggi layar dan dipotong di tengah.
 - Media Detail digeser dengan `pan` (media mengikuti jari, pindah setelah 48 poin atau lemparan cepat, berputar dari
   yang terakhir ke yang pertama) karena scroll-snap belum dibaca host Android; mengetuk media tidak memindahkannya
-  (ketukan di video menampilkan kontrolnya).
+  (ketukan di video menampilkan kontrolnya). Hanya media yang bergeser satu letak yang dianimasikan (`mediaMelangkah`):
+  tetangga yang baru dipasang atau melompat ke sisi lain karena putaran langsung ditempatkan, tidak melintas. Tinggi
+  penggeser mengikuti media pertama seperti aslinya (gambar ukur tak terlihat, `resize`): 0,56× lebar s.d. 58% layar.
 - Tombol back HP di akar tab Peta, Live dan Profil menekan kontrol Back tak terlihat (`button id="back"`, nama dari
   `navigationBack` root; host Android menekannya sebelum keluar): tutup lembar Peta, lalu kartu Peta, lalu ke Beranda
   seperti aslinya. Di akar Beranda back tetap keluar dari aplikasi.
