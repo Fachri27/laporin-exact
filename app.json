@@ -31,7 +31,8 @@
   },
   "deploy": {
     "store": {
-      "web": "0"
+      "web": "0",
+      "linux": "0"
     }
   },
   "hatches": {

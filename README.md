@@ -223,7 +223,8 @@ EXACT_UPLOAD_STORE_PASSWORD=… EXACT_UPLOAD_KEY_ALIAS=… EXACT_UPLOAD_KEY_PASS
 ```
 
 Dengan `--kirim`, versionCode dicek dulu terhadap EAS (`build:version:get`; harus lebih besar), lalu
-`dist/laporin-<versi>-<kode>.aab` diunggah dengan `eas submit --path` dari laporin-apps ke jalur internal sebagai draft
+`dist/laporin-<versi>-<kode>.aab` (build produksi Exact `EXACT_UPDATE_TRUST=production`: tanpa mode pengembangan dan
+tanpa updater OTA, `deploy.store.linux` "0" di app.json) diunggah dengan `eas submit --path` dari laporin-apps ke jalur internal sebagai draft
 (rilisnya ditekan di Play Console). Butuh `npx eas-cli login` dan Google Service Account Key untuk Play di EAS. Build
 lokal tidak menaikkan penghitung EAS: sesudahnya `npx eas-cli build:version:set -p android` di laporin-apps.
 
