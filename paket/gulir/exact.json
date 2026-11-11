@@ -1,0 +1,14 @@
+{
+  "kind": "interface",
+  "name": "@laporin/gulir",
+  "version": "1.0.0",
+  "substitute": "implementation",
+  "shapes": {},
+  "views": {
+    "tanpa-garis-gulir": {
+      "props": {},
+      "events": []
+    }
+  },
+  "names": []
+}

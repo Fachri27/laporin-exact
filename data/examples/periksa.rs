@@ -1,5 +1,5 @@
 //! Olah berkas JSON asli dengan inti yang sama dengan aplikasi:
-//! `cargo run -p laporin-exact-data --example periksa -- umpan|hotspot|komentar <berkas>`.
+//! `cargo run -p laporin-exact-data --example periksa -- umpan|komentar <berkas>`.
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
@@ -13,18 +13,11 @@ fn main() {
                 println!("- [{}] {} | {} | {} | {} {} | {}", l.id, l.judul, l.tempat, l.tanggal_pendek, l.lintang, l.bujur, l.sampul_kecil);
             }
         }
-        "hotspot" => {
-            let h = laporin_data::hotspot::olah_hotspot(&isi).unwrap();
-            println!("{} | {} | total {} (T{} S{} R{}) malam {}", h.hari, h.diperbarui, h.total, h.tinggi, h.sedang, h.rendah, h.malam);
-            for p in h.provinsi.iter().take(5) {
-                println!("- {} {} ({}%)", p.nama, p.jumlah, p.persen);
-            }
-        }
         "komentar" => {
             for k in laporin_data::umpan::olah_komentar(&isi).unwrap() {
                 println!("- {} ({}) {}: {}", k.nama, k.inisial, k.waktu, k.isi);
             }
         }
-        _ => eprintln!("jenis: umpan | hotspot | komentar"),
+        _ => eprintln!("jenis: umpan | komentar"),
     }
 }

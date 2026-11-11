@@ -1,3 +1,7 @@
+// Teks diuji dalam bahasa Indonesia (strings/id.json): driver agen memakai locale en-US bila tidak disebut, dan
+// strings/en.json akan dipakai untuk locale itu.
+locale "id-ID"
+
 test "tab bawah berpindah dan tombol LAPOR membuka formulir"
   tap "tab-peta"
   expect state nav.tab == "peta"
@@ -31,11 +35,28 @@ test "umpan yang gagal dimuat menawarkan coba lagi"
   clock data
   expect tree has "coba-lagi"
 
-test "tamu melihat panel Masuk uji di Profil"
+test "tamu melihat Masuk dengan Google dan email di Profil, tanpa Masuk uji"
   tap "tab-profil"
   clock settle
   expect tree has "panel-masuk"
-  expect tree has "masuk-uji"
+  expect tree has "masuk-google"
+  expect tree has "masuk-email"
+  expect tree missing "masuk-uji"
+
+test "tamu yang menyukai sorotan Beranda diminta masuk dulu"
+  clock data
+  tap "sorotan-suka"
+  clock settle
+  expect tree has "perlu-masuk-ya"
+
+test "tamu yang menyimpan laporan diminta masuk dulu"
+  clock data
+  tap "sorotan"
+  clock settle
+  tap "simpan"
+  clock settle
+  expect text "perlu-masuk-pesan" == "Masuk dulu untuk menyimpan laporan. Melapor tetap bisa tanpa akun."
+  expect tree has "perlu-masuk-ya"
 
 test "form email menolak isian kosong dan sandi pendek saat daftar"
   tap "tab-profil"
@@ -62,3 +83,51 @@ test "Ambil foto membuka kamera, dan Tutup kembali ke formulir"
   tap "tutup-kamera"
   clock settle
   expect tree has "kirim"
+
+test "Peta: Di sekitar Anda dengan tiga mode, lembar Lapisan, dan Panduan"
+  tap "tab-peta"
+  clock settle
+  expect text "judul-peta" == "Di sekitar Anda"
+  expect tree has "peta-sekitar"
+  expect tree has "peta-lokasiku"
+  expect tree has "peta-nusantara"
+  expect tree missing "peta-legenda"
+  tap "mode-asap"
+  expect tree has "peta-legenda"
+  tap "peta-lapisan"
+  expect tree has "lapisan-asap"
+  tap "lapisan-s1"
+  tap "tutup-lembar"
+  expect tree missing "lapisan-asap"
+  tap "mode-laporan"
+  expect tree has "peta-legenda"
+  tap "peta-panduan"
+  expect tree has "panduan-hotspot"
+  tap "topik-aerosol"
+  expect tree has "panduan-aerosol"
+
+test "Mulai live membuka Siapkan siaran yang meminta judul, lalu Tutup kembali ke tab Live"
+  tap "tab-siaran"
+  clock settle
+  tap "mulai-live"
+  clock settle
+  expect tree has "mulai-siaran"
+  expect text "mutu-terpilih" == "Otomatis · HD 60 fps"
+  tap "pilih-mutu"
+  expect tree has "mutu-hemat"
+  tap "mutu-hd30"
+  expect text "mutu-terpilih" == "HD 30 fps"
+  expect tree missing "mutu-hemat"
+  tap "mulai-siaran"
+  expect text "galat-live" == "Tulis singkat apa yang sedang terjadi."
+  tap "tutup-live"
+  clock settle
+  expect tree has "mulai-live"
+
+// strings/en.json: locale Inggris memakai tabel terjemahan (di Android, atur-bahasa mengikuti state `bahasa` = "ID").
+test "locale en-US memakai teks bahasa Inggris" on web
+  locale "en-US"
+  tap "tombol-lapor"
+  clock settle
+  tap "kirim"
+  expect text "galat" == "Add a short title first."

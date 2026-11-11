@@ -1,0 +1,10 @@
+{
+  "name": "@laporin/bahasa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bahasa aplikasi (ID/EN) dari tombol bahasa: mengatur locale aplikasi Android, jadi t() Exact berganti tabel.",
+  "exports": {
+    ".": "./exact.json",
+    "./android": "./android/exact.json"
+  }
+}

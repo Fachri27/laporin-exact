@@ -32,6 +32,53 @@ theme
   media.tinta = #0C0E0D  scheme=fixed
   media.garis = rgba(237, 232, 223, 0.25)  scheme=fixed
   media.redam = rgba(12, 14, 13, 0.5)  scheme=fixed
+  // Layar siaran (interaksi-live.tsx laporin-apps): selubung kepala & kaki, lembar gelap, nama warga, sinyal.
+  media.kepala = rgba(12, 14, 13, 0.55)  scheme=fixed
+  media.bayang = rgba(12, 14, 13, 0.8)  scheme=fixed
+  media.selubung = rgba(12, 14, 13, 0.6)  scheme=fixed
+  media.lembar = rgba(12, 14, 13, 0.92)  scheme=fixed
+  media.garis-lembar = rgba(237, 232, 223, 0.16)  scheme=fixed
+  media.samar = rgba(237, 232, 223, 0.62)  scheme=fixed
+  media.warga = rgba(237, 232, 223, 0.7)  scheme=fixed
+  media.mati = rgba(237, 232, 223, 0.5)  scheme=fixed
+  media.avatar = rgba(237, 232, 223, 0.2)  scheme=fixed
+  media.hijau = #7FD6A0  scheme=fixed
+  merek.oranye = #F98006  scheme=fixed
+  media.kuning = #E8BD55  scheme=fixed
+  media.oranye = #FF8A3D  scheme=fixed
+  latar.tirai = rgba(0, 0, 0, 0.6)  scheme=fixed
+  // Palet asap Aerosol Karhutla (palet-asap.ts laporin-apps): ikon legenda dan pita gradiennya.
+  palet.firewatch = light-dark(#A21CAF, #E879F9)
+  palet.bara = light-dark(#B45309, #FBBF24)
+  palet.spektrum = light-dark(#0369A1, #38BDF8)
+  palet.fw-0 = rgba(255, 247, 243, 0.2)  scheme=fixed
+  palet.fw-1 = #FDE1DE  scheme=fixed
+  palet.fw-2 = #FCC7C3  scheme=fixed
+  palet.fw-3 = #FAA3B6  scheme=fixed
+  palet.fw-4 = #F872A4  scheme=fixed
+  palet.fw-5 = #E23E99  scheme=fixed
+  palet.fw-6 = #B90D84  scheme=fixed
+  palet.fw-7 = #91017A  scheme=fixed
+  palet.fw-8 = #680172  scheme=fixed
+  palet.fw-9 = #49006A  scheme=fixed
+  palet.bara-0 = #FFF7EE  scheme=fixed
+  palet.bara-1 = #FFAA26  scheme=fixed
+  palet.bara-2 = #F57D00  scheme=fixed
+  palet.bara-3 = #E65200  scheme=fixed
+  palet.bara-4 = #BF360C  scheme=fixed
+  palet.spektrum-0 = #0055FF  scheme=fixed
+  palet.spektrum-1 = #00E5FF  scheme=fixed
+  palet.spektrum-2 = #1AFF1A  scheme=fixed
+  palet.spektrum-3 = #FFFF00  scheme=fixed
+  palet.spektrum-4 = #FF3300  scheme=fixed
+  palet.spektrum-5 = #80001A  scheme=fixed
+  // Skala AQI (US EPA) di legenda Angin dan Kualitas Udara.
+  aqi.baik = #00E400  scheme=fixed
+  aqi.sedang = #FFFF00  scheme=fixed
+  aqi.sensitif = #FF7E00  scheme=fixed
+  aqi.buruk = #FF0000  scheme=fixed
+  aqi.parah = #8F3F97  scheme=fixed
+  aqi.bahaya = #7E0023  scheme=fixed
   avatar.isi = light-dark(rgba(12, 14, 13, 0.12), rgba(237, 232, 223, 0.2))
   avatar.teks = light-dark(#0C0E0D, #EDE8DF)
   bayangan.bilah = rgba(0, 0, 0, 0.35)  scheme=fixed
@@ -55,6 +102,7 @@ icons
   icon.pengguna = icon(sf "person", svg "icons/pengguna.svg")
   icon.salin = icon(sf "square.on.square", svg "icons/salin.svg")
   icon.matahari = icon(sf "sun.max", svg "icons/matahari.svg")
+  icon.atur = icon(sf "gearshape", svg "icons/atur.svg")
   icon.senyap = icon(sf "speaker.slash", svg "icons/senyap.svg")
   icon.komentar = icon(sf "bubble.left", svg "icons/komentar.svg")
   icon.penuh = icon(sf "arrow.up.left.and.arrow.down.right", svg "icons/penuh.svg")
@@ -68,3 +116,17 @@ icons
   icon.mundur = icon(sf "gobackward", svg "icons/mundur.svg")
   icon.maju = icon(sf "goforward", svg "icons/maju.svg")
   icon.balik = icon(sf "arrow.triangle.2.circlepath.camera", svg "icons/balik.svg")
+  icon.bidik = icon(sf "location", svg "icons/bidik.svg")
+  icon.kanan = icon(sf "chevron.right", svg "icons/kanan.svg")
+  icon.mikMati = icon(sf "mic.slash", svg "icons/mikmati.svg")
+  icon.sinyal = icon(sf "cellularbars", svg "icons/sinyal.svg")
+  icon.kartu = icon(sf "creditcard", svg "icons/kartu.svg")
+  icon.jam = icon(sf "clock", svg "icons/jam.svg")
+  // Logo Laporin (dari LaporinLogo.png, dijiplak potrace jadi dua bagian dengan viewBox sama 276 × 75,4): "Lapor"
+  // diwarnai warna teks (terang/gelap ikut tema), "in" + sinyal diwarnai merek.oranye. Ditumpuk di komponen Merek.
+  icon.merekLapor = icon(sf "textformat", svg "icons/merek-lapor.svg")
+  icon.merekIn = icon(sf "dot.radiowaves.right", svg "icons/merek-in.svg")
+  icon.bola = icon(sf "globe", svg "icons/bola.svg")
+  icon.daftar = icon(sf "list.bullet", svg "icons/daftar.svg")
+  icon.lonceng = icon(sf "bell", svg "icons/lonceng.svg")
+  icon.loncengMati = icon(sf "bell.slash", svg "icons/lonceng-mati.svg")

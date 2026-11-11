@@ -1,0 +1,25 @@
+{
+  "kind": "interface",
+  "name": "@laporin/notifikasi",
+  "version": "1.0.0",
+  "substitute": "implementation",
+  "shapes": {},
+  "views": {
+    "atur-notifikasi": {
+      "props": {
+        "live": "bool",
+        "laporan": "bool",
+        "umpan": "string",
+        "siaran": "string",
+        "situs": "string",
+        "bahasa": "string",
+        "minta": "number",
+        "abaikan": "string"
+      },
+      "events": [
+        "message"
+      ]
+    }
+  },
+  "names": []
+}

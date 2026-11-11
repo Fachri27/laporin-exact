@@ -1,0 +1,17 @@
+{
+  "kind": "interface",
+  "name": "@laporin/masuk-google",
+  "version": "1.0.0",
+  "substitute": "implementation",
+  "shapes": {},
+  "views": {
+    "masuk-google": {
+      "props": {
+        "klien": "string",
+        "minta": "number"
+      },
+      "events": ["message"]
+    }
+  },
+  "names": []
+}

@@ -12,9 +12,12 @@
         "putar": "bool",
         "pas": "string",
         "lompat": "option<number>",
-        "lompatKe": "option<number>"
+        "lompatKe": "option<number>",
+        "waktu": "option<bool>"
       },
-      "events": ["message"]
+      "events": [
+        "message"
+      ]
     }
   },
   "names": []

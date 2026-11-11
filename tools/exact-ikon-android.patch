@@ -1,0 +1,80 @@
+diff --git a/host/android/app/build.gradle.kts b/host/android/app/build.gradle.kts
+index 17bc7db..f4af1af 100644
+--- a/host/android/app/build.gradle.kts
++++ b/host/android/app/build.gradle.kts
+@@ -53,6 +53,9 @@ android {
+         versionName = "1"
+         ndk { abiFilters += "arm64-v8a" }
+         manifestPlaceholders["appName"] = identity["name"] as String
++        // The launcher icon agent-android.mjs makes from app.json's `icons` (`-PappIconRes`), else the platform's.
++        manifestPlaceholders["appIcon"] =
++            if (providers.gradleProperty("appIconRes").isPresent) "@mipmap/ic_launcher" else "@android:drawable/sym_def_app_icon"
+         manifestPlaceholders["screenOrientation"] = screenOrientation
+         manifestPlaceholders["exactDevelopment"] = providers.gradleProperty("exactDevelopment").orNull == "1"
+     }
+@@ -67,6 +70,7 @@ android {
+     // The app's Rust library (as libexactcanvas.so) and its assets (the reader copies `app/` out of the APK once).
+     sourceSets["main"].jniLibs.directories.add(out.resolve("rust/jniLibs").path)
+     sourceSets["main"].assets.directories.add(out.resolve("rust/assets").path)
++    providers.gradleProperty("appIconRes").orNull?.let { sourceSets["main"].res.directories.add(it) }
+     sourceSets["main"].kotlin.directories.add(if (compose) "src/compose/java" else "src/nocompose/java")
+     // The app's Kotlin hatches and module roster in its `modules/android`; -PmodulesDir lets a
+     // component fixture compile the app's actual provider without copying its Kotlin.
+diff --git a/host/android/app/src/main/AndroidManifest.xml b/host/android/app/src/main/AndroidManifest.xml
+index 65f813d..1307d90 100644
+--- a/host/android/app/src/main/AndroidManifest.xml
++++ b/host/android/app/src/main/AndroidManifest.xml
+@@ -21,7 +21,9 @@
+          Android 16 the platform calls it only when the app opts in; without this, Back on Android 13 to 15 finished
+          the activity from any screen. -->
+     <!-- Locked secrets' files stay out of backups and transfers (res/xml/exact_backup.xml). -->
+-    <application android:label="${appName}" android:theme="@style/ExactLaunch" android:hardwareAccelerated="true"
++    <!-- The launcher icon: app.json's `icons` made into resources by agent-android.mjs (-PappIconRes), else the
++         platform's default. -->
++    <application android:label="${appName}" android:icon="${appIcon}" android:theme="@style/ExactLaunch" android:hardwareAccelerated="true"
+         android:banner="@drawable/banner" android:enableOnBackInvokedCallback="true"
+         android:fullBackupContent="@xml/exact_backup" android:dataExtractionRules="@xml/exact_data_extraction">
+         <profileable android:shell="true" />
+diff --git a/scripts/agent-android.mjs b/scripts/agent-android.mjs
+index 66b42e5..02cb186 100644
+--- a/scripts/agent-android.mjs
++++ b/scripts/agent-android.mjs
+@@ -456,11 +456,38 @@ function extensionArgs(app, out, config) {
+   const fragment = withMetaData(manifestFragment(bound, { privacyPolicy: app.manifest?.privacy_policy ?? null }), [...configMetaData(config), ...(androidShareActivity(app.manifest?.share_target) ?? [])]), fragmentFile = resolve(apkDirs(app).app, 'manifest-fragment.xml');
+   rmSync(fragmentFile, { force: true });
+   if (fragment) { mkdirSync(dirname(fragmentFile), { recursive: true }); writeFileSync(fragmentFile, fragment); }
++  const iconRes = androidIconRes(app);
+   return [...(bound.length ? [`-PextensionDirs=${[...bound.flatMap((b) => b.dirs), generated].join(',')}`] : []), ...(permissions.length ? [`-Ppermissions=${permissions.join(',')}`] : []),
++    ...(iconRes ? [`-PappIconRes=${iconRes}`] : []),
+     ...(fragment ? [`-PmanifestFragment=${fragmentFile}`] : []), ...(Object.keys(services).length ? [`-PforegroundServices=${JSON.stringify(services)}`] : []),
+     ...(features.length ? [`-PandroidFeatures=${features.join(',')}`] : [])];
+ }
+ 
++/** The launcher icon's resources from app.json's `icons` (the web manifest's `src`, `sizes`, `purpose`), or null when
++ * it names no PNG: the largest `maskable` PNG becomes an adaptive icon's foreground on white (Android keeps the middle
++ * 72 of its 108 dp, so its art belongs in the middle two thirds), the largest `any` one the legacy icon. */
++function androidIconRes(app) {
++  const icons = (Array.isArray(app.manifest?.icons) ? app.manifest.icons : [])
++    .filter((i) => typeof i?.src === 'string' && /\.png$/i.test(i.src) && existsSync(resolve(app.dir, i.src)));
++  const size = (i) => Math.max(0, ...String(i.sizes ?? '').split(/\s+/).map((s) => Number(s.split('x')[0]) || 0));
++  const largest = (purpose) => icons.filter((i) => String(i.purpose ?? 'any').split(/\s+/).includes(purpose)).sort((a, b) => size(b) - size(a))[0];
++  const maskable = largest('maskable'), any = largest('any') ?? maskable;
++  if (!any) return null;
++  const dir = resolve(apkDirs(app).app, 'icon-res');
++  rmSync(dir, { recursive: true, force: true });
++  mkdirSync(resolve(dir, 'mipmap-xxxhdpi'), { recursive: true });
++  copyFileSync(resolve(app.dir, any.src), resolve(dir, 'mipmap-xxxhdpi/ic_launcher.png'));
++  if (maskable) {
++    copyFileSync(resolve(app.dir, maskable.src), resolve(dir, 'mipmap-xxxhdpi/ic_launcher_foreground.png'));
++    mkdirSync(resolve(dir, 'mipmap-anydpi-v26'), { recursive: true });
++    writeFileSync(resolve(dir, 'mipmap-anydpi-v26/ic_launcher.xml'), ['<?xml version="1.0" encoding="utf-8"?>',
++      '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">',
++      '    <background android:drawable="@android:color/white" />',
++      '    <foreground android:drawable="@mipmap/ic_launcher_foreground" />', '</adaptive-icon>', ''].join('\n'));
++  }
++  return dir;
++}
++
+ /** `--install` (`--run`: and launch it): the APK onto the device `androidDevice` names. With none ready the build
+  * stands and says how to install it; with several and no ANDROID_SERIAL it refuses. The exit code. */
+ function installApk(app, apk, { run = false, built = 0 } = {}) {

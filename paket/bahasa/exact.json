@@ -1,0 +1,16 @@
+{
+  "kind": "interface",
+  "name": "@laporin/bahasa",
+  "version": "1.0.0",
+  "substitute": "implementation",
+  "shapes": {},
+  "views": {
+    "atur-bahasa": {
+      "props": {
+        "bahasa": "string"
+      },
+      "events": []
+    }
+  },
+  "names": []
+}

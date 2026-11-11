@@ -1616,6 +1616,7 @@ dependencies = [
  "exact-data",
  "exact-plan",
  "exact-runner",
+ "flate2",
  "serde_json",
 ]
 

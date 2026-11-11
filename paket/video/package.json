@@ -2,7 +2,7 @@
   "name": "@laporin/video",
   "version": "1.0.0",
   "private": true,
-  "description": "Pemutar video laporan (MediaPlayer Android di TextureView), untuk media Detail dan layar penuh.",
+  "description": "Pemutar video laporan (ExoPlayer AndroidX Media3 di TextureView, dengan tembolok disk), untuk sorotan Beranda, media Detail dan layar penuh.",
   "exports": {
     ".": "./exact.json",
     "./android": "./android/exact.json"

@@ -9,6 +9,11 @@
   "views": ["video-putar"],
   "hatches": [],
   "sources": { "kotlin": ["."] },
+  "maven": [
+    "androidx.media3:media3-exoplayer:1.11.1",
+    "androidx.media3:media3-datasource:1.11.1",
+    "androidx.media3:media3-database:1.11.1"
+  ],
   "artifacts": [],
   "class": "laporin.video.VideoModule"
 }

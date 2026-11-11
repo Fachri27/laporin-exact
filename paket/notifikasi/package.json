@@ -1,0 +1,10 @@
+{
+  "name": "@laporin/notifikasi",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Notifikasi siaran langsung dan laporan baru tanpa Firebase: WorkManager memeriksa server berkala, lalu notifikasi lokal.",
+  "exports": {
+    ".": "./exact.json",
+    "./android": "./android/exact.json"
+  }
+}

@@ -1,14 +1,88 @@
-//! Umpan laporan terverifikasi (`GET {SITUS}/api/umpan?bahasa=id`) dan komentarnya
+//! Umpan laporan terverifikasi (`GET {SITUS}/api/umpan?bahasa=id|en`) dan komentarnya
 //! (`GET {SITUS}/api/laporan/{id}/komentar`), dengan aturan klien laporin-apps: lewati laporan tanpa
 //! id angka, judul, koordinat sah (bukan 0,0) atau larik media. `SITUS` adalah `LAPORIN_SITUS` saat build
 //! (bawaan: mock-server, yang meneruskan produksi dan menambahkan suka & komentar mock).
+//!
+//! Server memilih bahasa judul, deskripsi dan tanggal dengan `?bahasa=` (EN kosong jatuh ke ID); crate ini
+//! menyeragamkan tanggalnya ("4 November 2026") dan membuat label bawaan dalam bahasa aktif.
+//!
+//! Transport HTTP host tidak meminta atau membuka kompresi sendiri: permintaan JSON ke situs membawa
+//! `accept-encoding: gzip` (umpan ±225 KB mentah, ±51 KB gzip) dan [`buka_gzip`] membukanya.
+//!
+//! Badan umpan terakhir yang sah disalin ke [`BERKAS_UMPAN`], supaya Beranda langsung terisi saat aplikasi dibuka
+//! dingin (`muatUmpanTersimpan()`), sebelum jaringan menjawab.
 
-use serde_json::Value as Json;
+use std::io::Read;
+
+use exact_runner::{Outcome, Request};
+use serde_json::{json, Value as Json};
 
 use crate::shapes::{Komentar, Laporan, Pulau, Sumber, Umpan};
-use crate::teks;
+use crate::teks::{self, dua};
 
 pub const SITUS: &str = env!("LAPORIN_SITUS");
+
+/// Salinan badan `GET /api/umpan` terakhir yang sah (JSON yang sudah dibuka gzip-nya).
+pub const BERKAS_UMPAN: &str = "app:/data/umpan.json";
+
+/// Batas JSON setelah dibuka (bom gzip tidak boleh menghabiskan memori).
+const BATAS_TERBUKA: u64 = 16 << 20;
+
+/// Nama pengirim bawaan bila media pertama tidak berketerangan.
+const KREDIT_ID: &str = "Laporan warga";
+const KREDIT_EN: &str = "Citizen report";
+
+/// Alamat umpan dalam bahasa aktif.
+pub fn alamat_umpan() -> String {
+    format!("{SITUS}/api/umpan?bahasa={}", dua!("id", "en"))
+}
+
+/// Badan balasan, dibuka bila server memampatkannya dengan gzip (`content-encoding: gzip`, nama kepala tanpa
+/// peduli huruf besar). Host yang sudah membukanya sendiri tapi tetap meneruskan kepalanya (URLSession) dikenali
+/// dari bita ajaib gzip yang tidak ada: badannya dipakai apa adanya.
+pub fn buka_gzip(headers: &[(String, String)], body: Vec<u8>) -> Result<Vec<u8>, String> {
+    let gzip = headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("content-encoding")
+            && v.split(',').any(|e| e.trim().eq_ignore_ascii_case("gzip") || e.trim().eq_ignore_ascii_case("x-gzip"))
+    });
+    if !gzip || !body.starts_with(&[0x1f, 0x8b]) {
+        return Ok(body);
+    }
+    let mut terbuka = Vec::with_capacity(body.len() * 5);
+    flate2::read::MultiGzDecoder::new(body.as_slice())
+        .take(BATAS_TERBUKA + 1)
+        .read_to_end(&mut terbuka)
+        .map_err(|e| format!("gzip: {e}"))?;
+    if terbuka.len() as u64 > BATAS_TERBUKA {
+        return Err(dua!("umpan terlalu besar setelah dibuka", "feed too large after decompression").into());
+    }
+    Ok(terbuka)
+}
+
+/// Tulis salinan umpan; `None` bila badannya bukan UTF-8 (tidak mungkin untuk JSON yang lolos [`olah_umpan`]).
+pub fn minta_simpan(body: &[u8]) -> Option<Request> {
+    let teks = std::str::from_utf8(body).ok()?;
+    Some(exact_data::storage::request("fs.atomicWriteFile", json!({ "path": BERKAS_UMPAN, "text": teks })))
+}
+
+pub fn minta_baca_simpanan() -> Request {
+    exact_data::storage::request("fs.readFile", json!({ "path": BERKAS_UMPAN }))
+}
+
+/// Umpan dari salinan di HP. Berkas yang belum ada, tak terbaca atau rusak = umpan kosong, bukan galat:
+/// Beranda lalu menunggu `muatUmpan()` seperti sebelum ada salinan.
+pub fn olah_simpanan(outcome: Outcome) -> Umpan {
+    let isi = exact_data::storage::response(outcome)
+        .ok()
+        .and_then(|v| v.get("base64").and_then(Json::as_str).and_then(teks::base64));
+    isi.and_then(|bita| olah_umpan(&bita).ok()).unwrap_or_default()
+}
+
+/// Keterangan media yang menandai pelapor anonim (server mengganti nama pelapor dengan "anonim").
+fn anonim(kredit: &str) -> bool {
+    let k = kredit.trim();
+    k.eq_ignore_ascii_case("anonim") || k.eq_ignore_ascii_case("anonymous")
+}
 
 /// Video diputar MediaPlayer Android langsung dari produksi: tumpukan jaringan Android menolak HTTP polos
 /// (mock-server lewat `adb reverse`), dan mock hanya meneruskan berkas yang sama.
@@ -44,10 +118,20 @@ fn laporan(j: &Json) -> Option<Laporan> {
             _ => teks_atau(m, "url", ""),
         })
         .unwrap_or("");
-    let kredit = pertama.map(|m| teks_atau(m, "keterangan", "Laporan warga")).unwrap_or("Laporan warga");
+    // Sorotan Beranda: poster video pertama bila ada (seperti KartuSorotan aslinya), supaya gambar yang menutupi
+    // pemutar sama dengan bingkai pertama videonya, bukan foto lain yang lalu berganti.
+    let sampul_sorotan = media
+        .iter()
+        .find(|m| m.get("jenis").and_then(Json::as_str) == Some("video"))
+        .map(|m| teks_atau(m, "poster", ""))
+        .filter(|p| !p.is_empty())
+        .unwrap_or(sampul);
+    let bawaan = dua!(KREDIT_ID, KREDIT_EN);
+    let kredit = pertama.map(|m| teks_atau(m, "keterangan", bawaan)).unwrap_or(bawaan);
+    let kredit = if teks::inggris() && anonim(kredit) { "Anonymous" } else { kredit };
     let pulau = teks_atau(j, "pulau", "");
     let tempat = teks_atau(j, "provinsi", if pulau.is_empty() { "Indonesia" } else { pulau });
-    let tanggal = teks_atau(j, "tanggal", "");
+    let tanggal = teks::tanggal_teks(teks_atau(j, "tanggal", ""));
     let lokasi = teks_atau(j, "lokasi", "");
     // Tempat singkat di meta kartu kisi: bagian pertama `lokasi` (desa), atau tempat bila tak ada.
     let desa = lokasi.split(',').next().map(str::trim).filter(|d| !d.is_empty()).unwrap_or(tempat);
@@ -74,15 +158,15 @@ fn laporan(j: &Json) -> Option<Laporan> {
         pulau: pulau.to_string(),
         tempat: tempat.to_string(),
         desa: desa.to_string(),
-        tanggal: tanggal.to_string(),
-        tanggal_pendek: teks::tanggal_pendek(tanggal),
+        tanggal_pendek: teks::tanggal_pendek(&tanggal),
+        tanggal,
         lokasi: lokasi.to_string(),
         lintang,
         bujur,
         lat,
         lng,
         deskripsi: teks_atau(j, "deskripsi", "").trim().to_string(),
-        sampul: gambar(sampul, 828),
+        sampul: gambar(sampul_sorotan, 828),
         sampul_kecil: gambar(sampul, 640),
         kredit: kredit.to_string(),
         inisial: teks::inisial(kredit),
@@ -99,8 +183,8 @@ fn laporan(j: &Json) -> Option<Laporan> {
 
 /// Teks JSON umpan → laporan yang sah (urutan server: terbaru dulu) dan pulau menurut jumlah laporannya.
 pub fn olah_umpan(body: &[u8]) -> Result<Umpan, String> {
-    let data: Json = serde_json::from_slice(body).map_err(|e| format!("JSON umpan: {e}"))?;
-    let butir = data.as_array().ok_or("umpan bukan larik")?;
+    let data: Json = serde_json::from_slice(body).map_err(|e| dua!(format!("JSON umpan: {e}"), format!("Feed JSON: {e}")))?;
+    let butir = data.as_array().ok_or(dua!("umpan bukan larik", "feed is not an array"))?;
     let mut laporan: Vec<Laporan> = butir.iter().filter_map(laporan).collect();
     // "{n} laporan terverifikasi" di Detail: laporan lain dengan nama pengirim (kredit) yang sama.
     let mut per_kredit: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
@@ -113,8 +197,9 @@ pub fn olah_umpan(body: &[u8]) -> Result<Umpan, String> {
     let pulau = hitung_per(&laporan, |l| &l.pulau, usize::MAX);
     // "Sedang ramai" di Cari: delapan provinsi dengan laporan terbanyak.
     let provinsi = hitung_per(&laporan, |l| if l.tempat == l.pulau || l.tempat == "Indonesia" { "" } else { &l.tempat }, 8);
-    // "Sumber Terverifikasi": sepuluh pengirim terbanyak, tanpa nama bawaan.
-    let sumber = hitung_per(&laporan, |l| if l.kredit == "Laporan warga" || l.kredit == "Anonim" { "" } else { &l.kredit }, 10)
+    // "Sumber Terverifikasi": sepuluh pengirim terbanyak, tanpa nama bawaan dan tanpa pelapor anonim.
+    let bukan_sumber = |k: &str| k == KREDIT_ID || k == KREDIT_EN || anonim(k);
+    let sumber = hitung_per(&laporan, |l| if bukan_sumber(&l.kredit) { "" } else { &l.kredit }, 10)
         .into_iter()
         .map(|p| Sumber { inisial: teks::inisial(&p.nama), nama: p.nama, jumlah: p.jumlah })
         .collect();
@@ -137,18 +222,20 @@ fn hitung_per(laporan: &[Laporan], kunci: impl Fn(&Laporan) -> &str, batas: usiz
 
 /// Teks JSON komentar → akar komentar (terbaru dulu), dengan jumlah balasan masing-masing.
 pub fn olah_komentar(body: &[u8]) -> Result<Vec<Komentar>, String> {
-    let data: Json = serde_json::from_slice(body).map_err(|e| format!("JSON komentar: {e}"))?;
-    let butir = data.get("komentar").and_then(Json::as_array).ok_or("komentar bukan larik")?;
+    let data: Json =
+        serde_json::from_slice(body).map_err(|e| dua!(format!("JSON komentar: {e}"), format!("Comments JSON: {e}")))?;
+    let butir = data.get("komentar").and_then(Json::as_array).ok_or(dua!("komentar bukan larik", "comments is not an array"))?;
+    let bawaan = dua!("Warga", "Citizen");
     Ok(butir
         .iter()
         .filter_map(|k| {
-            let nama = teks_atau(k, "nama", "Warga");
+            let nama = teks_atau(k, "nama", bawaan);
             Some(Komentar {
                 id: k.get("id")?.as_i64()?.to_string(),
                 nama: nama.to_string(),
                 inisial: teks::inisial(nama),
                 isi: k.get("isi")?.as_str()?.trim().to_string(),
-                waktu: teks_atau(k, "waktu", "").to_string(),
+                waktu: teks::waktu_relatif(teks_atau(k, "waktu", "")),
                 balasan: k.get("balasan").and_then(Json::as_array).map_or(0.0, |b| b.len() as f64),
             })
         })
@@ -202,6 +289,72 @@ mod uji {
         assert_eq!(prov, ["Kalimantan Tengah"]);
         let sumber: Vec<(&str, &str)> = u.sumber.iter().map(|s| (s.nama.as_str(), s.inisial.as_str())).collect();
         assert_eq!(sumber, [("Muhamad", "MU")]);
+    }
+
+    #[test]
+    fn umpan_bahasa_inggris() {
+        teks::atur_bahasa("EN");
+        assert_eq!(alamat_umpan(), format!("{SITUS}/api/umpan?bahasa=en"));
+        let u = olah_umpan(CONTOH.as_bytes()).unwrap();
+        let l = &u.laporan[0];
+        assert_eq!((l.lintang.as_str(), l.bujur.as_str()), ("2.01° S", "113.50° E"));
+        assert_eq!((l.tanggal.as_str(), l.tanggal_pendek.as_str()), ("4 November 2026", "4 NOV"));
+        assert_eq!(u.laporan[1].kredit, "Citizen report");
+        // Umpan `?bahasa=en` memberi tanggal en-US; tampilannya tetap "4 August 2026" / "4 AUG".
+        let en = olah_umpan(
+            br#"[{"id":1,"judul":"Fire","tanggal":"August 4, 2026","lat":1,"lng":1,
+                 "media":[{"jenis":"gambar","url":"/a.jpg","keterangan":"anonim"}]}]"#,
+        )
+        .unwrap();
+        let l = &en.laporan[0];
+        assert_eq!((l.tanggal.as_str(), l.tanggal_pendek.as_str()), ("4 August 2026", "4 AUG"));
+        assert_eq!(l.kredit, "Anonymous");
+        assert!(en.sumber.is_empty(), "pelapor anonim bukan sumber");
+        let k = olah_komentar(br#"{"komentar":[{"id":1,"isi":"Hi","waktu":"3 hari yang lalu"}]}"#).unwrap();
+        assert_eq!((k[0].nama.as_str(), k[0].waktu.as_str()), ("Citizen", "3 days ago"));
+        teks::atur_bahasa("ID");
+        assert_eq!(alamat_umpan(), format!("{SITUS}/api/umpan?bahasa=id"));
+        let k = olah_komentar(br#"{"komentar":[{"id":1,"isi":"Hai","waktu":"3 hari yang lalu"}]}"#).unwrap();
+        assert_eq!((k[0].nama.as_str(), k[0].waktu.as_str()), ("Warga", "3 hari yang lalu"));
+    }
+
+    #[test]
+    fn gzip_dibuka_bila_kepalanya_gzip() {
+        use std::io::Write;
+        let mut z = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        z.write_all(CONTOH.as_bytes()).unwrap();
+        let mampat = z.finish().unwrap();
+        let kepala = |v: &str| vec![("Content-Type".to_string(), "application/json".to_string()), ("Content-Encoding".to_string(), v.to_string())];
+        let terbuka = buka_gzip(&kepala("gzip"), mampat.clone()).unwrap();
+        assert_eq!(terbuka, CONTOH.as_bytes());
+        assert_eq!(olah_umpan(&terbuka).unwrap().laporan.len(), 3);
+        // Nama kepala tanpa peduli huruf besar.
+        assert_eq!(buka_gzip(&[("content-encoding".into(), "GZIP".into())], mampat.clone()).unwrap(), CONTOH.as_bytes());
+        // Tanpa kepala: badan apa adanya, juga bila badannya gzip.
+        assert_eq!(buka_gzip(&[], mampat.clone()).unwrap(), mampat);
+        // Host yang sudah membuka badannya tapi tetap meneruskan kepalanya.
+        assert_eq!(buka_gzip(&kepala("gzip"), CONTOH.as_bytes().to_vec()).unwrap(), CONTOH.as_bytes());
+        // gzip rusak = galat, bukan umpan setengah.
+        assert!(buka_gzip(&kepala("gzip"), mampat[..mampat.len() / 2].to_vec()).is_err());
+    }
+
+    #[test]
+    fn salinan_umpan() {
+        let minta = minta_simpan(CONTOH.as_bytes()).unwrap();
+        let isi: Json = serde_json::from_slice(minta.storage.as_ref().unwrap()).unwrap();
+        assert_eq!(isi["op"], "fs.atomicWriteFile");
+        assert_eq!(isi["args"]["path"], BERKAS_UMPAN);
+        assert_eq!(isi["args"]["text"], CONTOH);
+        let baca: Json = serde_json::from_slice(minta_baca_simpanan().storage.as_ref().unwrap()).unwrap();
+        assert_eq!((baca["op"].as_str(), baca["args"]["path"].as_str()), (Some("fs.readFile"), Some(BERKAS_UMPAN)));
+        let berkas = |v: Json| Outcome::Storage(serde_json::to_vec(&v).unwrap());
+        // base64 dari CONTOH, seperti `fs.readFile` host.
+        let b64 = exact_runner::agent::base64(CONTOH.as_bytes());
+        assert_eq!(olah_simpanan(berkas(json!({ "base64": b64 }))).laporan.len(), 3);
+        // Belum ada, rusak, bukan JSON umpan: umpan kosong.
+        assert!(olah_simpanan(berkas(json!({ "error": "ENOENT: no such file" }))).laporan.is_empty());
+        assert!(olah_simpanan(berkas(json!({ "base64": exact_runner::agent::base64(b"{rusak") }))).laporan.is_empty());
+        assert!(olah_simpanan(Outcome::Failed { kind: exact_runner::FailureKind::Unsupported, message: "x".into() }).laporan.is_empty());
     }
 
     #[test]

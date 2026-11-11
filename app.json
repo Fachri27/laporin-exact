@@ -5,17 +5,44 @@
   "id": "id.laporin.exact",
   "start_url": "/",
   "display": "standalone",
+  "icons": [
+    {
+      "src": "assets/ikon/ikon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/ikon/ikon-maskable-432.png",
+      "sizes": "432x432",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
   "app": {
     "id": "id.laporin.exact",
     "name": "Laporin"
   },
   "host": {
     "web": {},
-    "android": {}
+    "android": {
+      "minimumOS": "10"
+    }
   },
   "deploy": {
     "store": {
       "web": "0"
     }
+  },
+  "hatches": {
+    "sentuh-web": [
+      "android"
+    ]
+  },
+  "data": [
+    "kunci"
+  ],
+  "strings": {
+    "base": "id"
   }
 }

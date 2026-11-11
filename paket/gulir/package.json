@@ -1,0 +1,10 @@
+{
+  "name": "@laporin/gulir",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Menyembunyikan garis gulir (scroll indicator) host Android Exact, yang belum membaca scrollbar-width.",
+  "exports": {
+    ".": "./exact.json",
+    "./android": "./android/exact.json"
+  }
+}

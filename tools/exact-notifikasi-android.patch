@@ -1,0 +1,13 @@
+diff --git a/runner/src/device.rs b/runner/src/device.rs
+index 2570058..b259e4e 100644
+--- a/runner/src/device.rs
++++ b/runner/src/device.rs
+@@ -240,6 +240,8 @@ pub const DEVICES: &[Device] = &[
+     Device {
+         name: "notifications",
+         ios: &[],
++        // Android 13+ asks for it before an app's notification shows (a local patch for laporin-exact's own package).
++        android: &["android.permission.POST_NOTIFICATIONS"],
+         macos: &[],
+         hardened: None,
+         web: None,

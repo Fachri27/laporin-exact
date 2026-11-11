@@ -1,0 +1,219 @@
+<!doctype html>
+<!--
+  Peta tab Peta ("Di sekitar Anda"): MapLibre GL di WebView `web-halaman` (paket/web), padanan peta laporin-apps
+  (src/components/peta-gl.tsx, bilah-waktu.tsx, peta-prakiraan.tsx; logika mode/waktu/hari hotspot dari
+  peta-laporan.tsx): citra satelit EOX lewat tembolok geoplatform, penanda tetes api per sel kisi (lib/kisi-peta.ts),
+  lapisan WebGL Aerosol Karhutla (lib/asap-gl.ts, data lib/sebaran-asap.ts), hotspot NASA FIRMS (lib/hotspot-gl.ts,
+  lib/hotspot-muat.ts), bilah waktu (digambar di sini karena Contract tak bisa menyeret), logo Copernicus, dan mode
+  Angin: iframe Windy /api/forecasting di atas peta MapLibre yang tetap hidup di bawahnya. Kepala, chip mode, tombol
+  peta, legenda, lembar, kartu, dan pemuat "Memuat peta dan citra satelit…" digambar Contract. Logikanya: sekitar.js.
+  WebView berakhir tepat di atas bilah tab, jadi peta tanpa padding bawah; kartu yang terbuka cukup menggeser bilah
+  waktu (padBawah) dan titik yang diketuk di baliknya (tampakkan).
+
+  Masuk, dari Contract lewat window.terima(JSON). Dikirim ulang UTUH tiap ada yang berubah; halaman membandingkan
+  sendiri dengan nilai sebelumnya:
+    { mode: "laporan" | "asap" | "angin",
+      laporan: [[id, lat, lng, pulau], …],   id & pulau teks
+      pilih: id | "",                        laporan terpilih: penandanya disorot
+      pulau: "" | pulau,                     saringan pulau: penanda pulau lain diredupkan (0,35)
+      titik: bool,                           penanda laporan (hanya mode laporan)
+      asap: bool,                            lapisan Aerosol Karhutla + bilah waktu + logo (hanya mode asap)
+      satelit: [bool, bool, bool],           hotspot MODIS (TERRA/AQUA), VIIRS S-NPP, VIIRS NOAA-20
+      angin: bool,                           (boleh tak ada = true) warna AQI & animasi angin di mode angin
+      globe: bool,                           proyeksi bola dunia (mode angin tetap datar: mesin Windy)
+      gaya: 0 | 1 | 2,                       palet asap Fire Watch / Bara / Spektrum
+      tema: "light" | "dark",                bilah waktu & Windy
+      lokasiku: [lat, lng] | null,
+      padBawah: px,                          tinggi kartu yang terbuka di tepi bawah (0 bila tak ada);
+                                             bilah waktu berada di bottom = padBawah + 12
+      bahasa: "id" | "en",                   (boleh tak ada = "id") bahasa semua teks halaman dan teks manusia di
+                                             pesan keluar; berganti = diganti di tempat (peta/data tak dimuat ulang)
+      perintah: { n, jenis } }               dijalankan tiap n berganti; n pertama yang diterima hanya dicatat
+    jenis: "rumah" (seluruh Nusantara, lebar 46°), "lokasi" (ke lokasiku, lebar 1,2°), "paskan" (paskan kamera ke
+           laporan pulau yang disaring, atau semua), "ulang" (muat lagi ubin citra, asap, hotspot, Windy yang gagal).
+           Di mode angin rumah/lokasi menggerakkan kamera Windy; kembali dari sana, peta MapLibre melanjutkan
+           dari tempat terakhir Windy.
+
+  Keluar, lewat laporin.kirim(teks): teks polos, kolom dipisah spasi (atau tab bila isinya bisa berspasi). Kata awal
+  dan urutan kolom tetap di semua bahasa; yang mengikuti `bahasa` hanya teks manusianya: jarak (koma/titik desimal,
+  pemisah ribuan), waktu & hari (nama bulan, "(malam)"/"(night)", "24 jam terakhir"/"last 24 hours"), frp, dan
+  siklus model asap. Bahasa berganti: hotspot-info, asap-info, jarak (bila ada laporan terpilih), dan hotspot (bila
+  kartunya terbuka) dikirim ulang dalam bahasa baru.
+    "siap"                                   gaya peta & ubin layar pertama termuat (atau gagal)
+    "pilih <id> <jarak|->"                   penanda laporan diketuk (jarak dari lokasiku, spasi di dalamnya NBSP)
+    "jarak <jarak|->"                        lokasiku berubah selagi ada laporan terpilih
+    "ketuk"                                  tempat kosong diketuk, atau titik hotspot yang kartunya terbuka hilang
+                                             (hari/data hotspot berganti): tutup kartu
+    "hotspot <provinsi>\t<k>\t<waktu>\t<satelit>\t<frp>"
+                                             titik hotspot diketuk (zoom ≥ 7, sasaran 18 px); k kepercayaan 0–2,
+                                             mis. "Riau\t2\t20 Okt, 13:50 WIB (malam)\tNASA-SNPP (VIIRS)\t32,1 MW"
+                                             (en: "Riau\t2\t20 Oct, 13:50 WIB (night)\tNASA-SNPP (VIIRS)\t32.1 MW")
+    "hotspot-info <status>\t<n0>\t<n1>\t<n2>\t<hari>"
+                                             status memuat | ok | galat | basi; n0–n2 jumlah titik per satelit
+                                             (kosong bila belum ada data); hari "24 jam terakhir" | "27 Okt 2026"
+                                             (en: "last 24 hours" | "27 Oct 2026").
+                                             Hanya selama ada satelit yang menyala, tiap kali berubah.
+    "asap-info <status>\t<siklus model WIB>" status memuat | ok | galat, mis. "asap-info ok\t9 Nov, 19:00 WIB"
+                                             (bulan mengikuti bahasa: "9 Agt…" / "9 Aug…")
+    "bilah <tinggi px>"                      tinggi bilah waktu yang tampak (bilangan bulat, 0 = tersembunyi):
+                                             baris kendali native diletakkan di atasnya
+    "buka <url>"                             tautan luar (logo Copernicus): buka di peramban
+-->
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="maplibre-gl.css">
+<style>
+/* Poppins seperti aplikasi & situs; berkasnya ikut aset aplikasi. */
+@font-face { font-family: Poppins; font-weight: 400; font-display: swap; src: url(../fonts/Poppins-Regular.ttf) format('truetype'); }
+@font-face { font-family: Poppins; font-weight: 500; font-display: swap; src: url(../fonts/Poppins-Medium.ttf) format('truetype'); }
+@font-face { font-family: Poppins; font-weight: 600; font-display: swap; src: url(../fonts/Poppins-SemiBold.ttf) format('truetype'); }
+@font-face { font-family: Poppins; font-weight: 700; font-display: swap; src: url(../fonts/Poppins-Bold.ttf) format('truetype'); }
+
+html, body { margin: 0; height: 100%; overflow: hidden; background: #000; overscroll-behavior: none; }
+* { -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; }
+#peta { position: fixed; inset: 0; background: #000; }
+/* Mode Angin: peta tetap hidup (kembali dari Windy seketika), hanya tak tampak. */
+#peta.sembunyi { visibility: hidden; }
+
+/* ——— Penanda laporan (peta-gl.tsx) ——— */
+.pin { cursor: pointer; }
+/* Di balik bola dunia: MapLibre memberi kelas ini; opasitasnya 0, juga tak bisa diketuk. */
+.maplibregl-marker-covered { pointer-events: none; }
+.tetes { box-sizing: border-box; width: 40px; height: 40px; border: 3px solid #EDE8DF; border-radius: 14px 14px 14px 3px;
+  background: #FF4A1C; transform: rotate(-45deg); display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 10px rgba(0,0,0,.3); transition: transform .18s cubic-bezier(.2,1.3,.4,1), box-shadow .18s; }
+/* 1,2×, naik (1,2 − 1)·40/√2 px supaya ujung tetes tetap di titik kejadian. */
+.tetes.dipilih { transform: translateY(-5.66px) rotate(-45deg) scale(1.2); box-shadow: 0 0 0 5px rgba(255,74,28,.25), 0 4px 10px rgba(0,0,0,.3); }
+.tetes .isi { transform: rotate(45deg); display: flex; align-items: center; gap: 1px; color: #0C0E0D;
+  font: 700 11px ui-monospace, Menlo, monospace; }
+.lokasiku { width: 16px; height: 16px; border-radius: 50%; background: #1a73e8; border: 3px solid #fff;
+  box-sizing: border-box; box-shadow: 0 0 0 6px rgba(26,115,232,.25), 0 1px 4px rgba(0,0,0,.4); pointer-events: none; }
+
+/* ——— Putaran (ActivityIndicator) ——— */
+.putaran { display: block; flex-shrink: 0; width: 20px; height: 20px; animation: putar .8s linear infinite; }
+@keyframes putar { to { transform: rotate(360deg); } }
+
+/* ——— Mode Angin (peta-prakiraan.tsx) ——— */
+#angin { position: fixed; inset: 0; z-index: 1; background: #0C0E0D; display: none; }
+#angin.tampil { display: block; }
+#angin iframe { display: block; width: 100%; height: 100%; border: 0; }
+.kabar-angin { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; padding: 0 32px; background: #0C0E0D; color: #EDE8DF; opacity: 0; visibility: hidden;
+  transition: opacity .2s, visibility 0s .2s; }
+.kabar-angin.tampil { opacity: 1; visibility: visible; transition: none; }
+.kabar-angin p { margin: 0; color: rgba(237,232,223,.75); font: 400 13.5px/20px Poppins, sans-serif; text-align: center; }
+/* Tombol primer aplikasi (components/tombol.tsx): pil sinyal, huruf tinta kapital. */
+.tombol { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 22px;
+  border-radius: 26px; background: #FF4A1C; color: #0C0E0D; font: 700 15px Poppins, sans-serif; letter-spacing: .4px;
+  text-transform: uppercase; }
+.tombol:active { background: #E03A0E; }
+
+/* ——— Logo Copernicus (data asap CAMS), selebar logo Windy mode Angin ——— */
+#logo { position: fixed; top: 12px; left: 12px; z-index: 2; width: 98px; height: 36px; opacity: 0; visibility: hidden;
+  transition: opacity .15s, visibility 0s .15s; }
+#logo.tampil { opacity: .95; visibility: visible; transition: opacity .15s; }
+#logo img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+
+/* ——— Bilah waktu (bilah-waktu.tsx) ——— */
+#bilah { --latar: #EDE8DF; --garis: #CAC5BC; --teks: #0C0E0D; --teks2: #5E5E5A; --aksen-teks: #B02C08; --rel: rgba(0,0,0,.12);
+  --pred: #8A5A00; --pred-latar: rgba(176,120,0,.12); --anl: #0369A1; --anl-latar: rgba(2,132,199,.12);
+  --awal: #86198F; --akhir: #B90D84;
+  position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 3; box-sizing: border-box; padding: 8px 10px 2px;
+  border: 1px solid var(--garis); border-radius: 20px; background: var(--latar); color: var(--teks);
+  box-shadow: 0 4px 14px rgba(0,0,0,.25); font-family: Poppins, sans-serif;
+  opacity: 0; transform: translateY(25px); visibility: hidden; pointer-events: none;
+  transition: opacity .15s, transform .15s, visibility 0s .15s, bottom .22s; }
+#bilah[data-tema="dark"] { --latar: #0C0E0D; --garis: #30312F; --teks: #EDE8DF; --teks2: #979590; --aksen-teks: #FF4A1C;
+  --rel: rgba(255,255,255,.15); --pred: #E8BD55; --pred-latar: rgba(232,189,85,.12); --anl: #7DD3FC; --anl-latar: rgba(56,189,248,.15); }
+#bilah[data-warna="udara"] { --awal: #059669; --akhir: #84CC16; }
+#bilah.tampil { opacity: 1; transform: none; visibility: visible; pointer-events: auto;
+  transition: opacity .22s, transform .22s, visibility 0s, bottom .22s; }
+#bilah .kabar { display: none; min-height: 36px; align-items: center; gap: 10px; }
+#bilah.berkabar { padding-bottom: 8px; }
+#bilah.berkabar .kabar { display: flex; }
+#bilah.berkabar .utama { display: none; }
+.kabar .ikon { display: flex; flex-shrink: 0; color: var(--teks2); }
+.kabar .teks { flex: 1; min-width: 0; font-weight: 500; font-size: 13px; overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.kabar .coba { margin: -10px; padding: 10px; color: var(--aksen-teks); font-weight: 600; font-size: 11px; letter-spacing: .6px; }
+.atas { display: flex; align-items: center; gap: 2px; }
+.putar { flex-shrink: 0; width: 34px; height: 34px; margin-right: 2px; border-radius: 17px; display: flex; align-items: center;
+  justify-content: center; color: #fff; background: linear-gradient(to right, var(--awal), var(--akhir)); }
+.putar:active { opacity: .8; }
+.putar svg { display: block; }
+.putar.main svg { margin-left: 2px; }
+.laju { flex-shrink: 0; box-sizing: border-box; min-width: 34px; height: 26px; margin-left: 2px; padding: 0 6px;
+  border: 1px solid var(--garis); border-radius: 999px; display: flex; align-items: center; justify-content: center;
+  font-weight: 600; font-size: 11px; font-variant-numeric: tabular-nums; }
+.laju:active { opacity: .7; }
+.label { flex: 1; min-width: 0; margin-left: 6px; display: flex; justify-content: flex-end; }
+.baris-label { display: flex; align-items: center; gap: 6px; max-width: 100%; }
+.baris-label .putaran { width: 16px; height: 16px; color: var(--teks2); }
+.waktu { flex-shrink: 1; min-width: 0; font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cip { flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px;
+  color: var(--anl); background: var(--anl-latar); }
+.cip.prediksi { color: var(--pred); background: var(--pred-latar); }
+.cip i { width: 5px; height: 5px; border-radius: 3px; background: currentColor; }
+.cip b { font-weight: 600; font-size: 9px; letter-spacing: .5px; }
+.bawah { display: flex; align-items: center; gap: 10px; }
+.hari { min-width: 38px; color: var(--teks2); font-weight: 500; font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hari.akhir { text-align: right; }
+/* Wadah setinggi 40 = sasaran sentuh; relnya 5 seperti situs. */
+.wadah-rel { position: relative; flex: 1; height: 40px; display: flex; align-items: center; touch-action: none; }
+.rel { width: 100%; height: 5px; border-radius: 3px; overflow: hidden; background: var(--rel); }
+.isi-rel { width: 100%; height: 100%; transform-origin: left; transform: scaleX(0);
+  background: linear-gradient(to right, var(--awal), var(--akhir)); }
+.kenop { position: absolute; top: 50%; left: 0; box-sizing: border-box; width: 16px; height: 16px; margin: -8px 0 0 -8px;
+  border-radius: 8px; border: 2px solid var(--akhir); background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+/* Langkah berikutnya saat berputar meluncur; lompatan langsung di tempat. */
+#bilah.luncur .isi-rel { transition: transform .16s ease-in-out; }
+#bilah.luncur .kenop { transition: left .16s ease-in-out; }
+</style>
+</head>
+<body>
+<div id="peta"></div>
+<div id="angin">
+  <div class="kabar-angin" id="angin-memuat">
+    <svg class="putaran" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="34 60"/></svg>
+    <p data-teks="memuatAngin">Memuat peta angin dan kualitas udara Windy…</p>
+  </div>
+  <div class="kabar-angin" id="angin-galat">
+    <p data-teks="galatAngin">Peta angin dan kualitas udara tidak termuat. Periksa koneksi lalu coba lagi.</p>
+    <button class="tombol" id="angin-ulang" type="button">
+      <svg width="18" height="18" viewBox="0 0 512 512" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-miterlimit="10" stroke-width="32" d="M320 146s24.36-12-64-12a160 160 0 10160 160"/><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32" d="M256 58l80 80-80 80"/></svg>
+      <span data-teks="cobaLagi">Coba lagi</span>
+    </button>
+  </div>
+</div>
+<div id="logo" role="link" aria-label="Copernicus Atmosphere Monitoring Service"><img src="https://geoplatform.nusantara.earth/assets/img/copernicus-white.svg" alt=""></div>
+<div id="bilah" data-tema="light" data-warna="asap">
+  <div class="kabar">
+    <span class="ikon"></span>
+    <span class="teks"></span>
+    <button class="coba" type="button" data-teks="cobaLagiKapital">COBA LAGI</button>
+  </div>
+  <div class="utama">
+    <div class="atas">
+      <button class="putar" type="button" aria-label="Putar animasi" data-teks-label="putar"></button>
+      <button class="laju" type="button">1×</button>
+      <div class="label"><div class="baris-label">
+        <svg class="putaran" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="34 60"/></svg>
+        <span class="waktu"></span>
+        <span class="cip"><i></i><b></b></span>
+      </div></div>
+    </div>
+    <div class="bawah">
+      <span class="hari"></span>
+      <div class="wadah-rel" role="slider" aria-label="Linimasa" data-teks-label="linimasa"><div class="rel"><div class="isi-rel"></div></div><div class="kenop"></div></div>
+      <span class="hari akhir"></span>
+    </div>
+  </div>
+</div>
+<script src="maplibre-gl.js"></script>
+<script src="sekitar.js"></script>
+</body>
+</html>

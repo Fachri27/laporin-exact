@@ -1,0 +1,14 @@
+{
+  "kind": "implementation",
+  "implements": "@laporin/bahasa@^1.0",
+  "platform": "android",
+  "targets": ["android"],
+  "shapes": {},
+  "options": {},
+  "names": [],
+  "views": ["atur-bahasa"],
+  "hatches": [],
+  "sources": { "kotlin": ["."] },
+  "artifacts": [],
+  "class": "laporin.bahasa.BahasaModule"
+}

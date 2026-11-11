@@ -1,0 +1,317 @@
+<!doctype html>
+<!--
+  Siaran langsung pelapor (layar Live): kamera dan mikrofon HP diterbitkan ke LiveKit, seperti siaran-live.tsx
+  laporin-apps dan pelapor-uji.html mock-server. Halaman menampilkan pratinjau kamera dan hati yang melayang; tombol dan
+  teks digambar Contract di atasnya. Token tidak diminta di sini (WebView menolak http polos ke server laporan): inti
+  Rust memintanya, Contract mengirimnya lewat window.terima.
+
+  Masuk (window.terima, JSON):
+    { url, token, publik, hadap: "environment" | "user", bisu, mutu: "fhd60" | "otomatis" | "hd30" | "hemat",
+      lokasi: [lat, lng] | null, akhiri: n, komentar: { n, teks }, suka: n, bahasa: "id" | "en" }
+    Kamera menyala begitu halaman dibuka; url + token = sambung dan terbitkan; akhiri yang naik = putuskan;
+    komentar yang n-nya naik dikirim ke penonton (teks dikodekan encodeURIComponent); suka yang naik = hati dari
+    pelapor sendiri. bahasa (tak ada = "id") = bahasa teks manusia di pesan keluar; berganti = daftar penonton dan
+    pil sinyal dikirim ulang dalam bahasa baru.
+  Keluar (laporin.kirim):
+    "kamera" (pratinjau tampil) · "tanpa-suara" (mikrofon gagal: siaran tanpa suara) · "terhubung"
+    · "penonton <n>" · "daftar <baris>" (bersama.js) · "suka <n>" · "komentar <peran>\t<nama>\t<isi>"
+    · "sinyal <excellent|good|poor|lost|unknown>\t<1 bila video ditahan>\t<mis. 720p60 · 3,1 Mbps>"
+    · "mutu-ganti" / "mutu-siap" · "putus-sementara" / "pulih" · "berakhir" · "galat <pesan>"
+    Mengikuti bahasa: <pesan> galat, laju sinyal ("3,1 Mbps" / "3.1 Mbps"), dan <nama> pengganti peserta tanpa nama
+    di daftar/komentar ("Warga" / "Citizen", "Petugas" / "Officer"; bersama.js).
+-->
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0C0E0D; }
+video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #0C0E0D; }
+/* Tanpa poster bawaan WebView Android (ikon play abu-abu) sebelum bingkai kamera pertama: poster = piksel transparan. */
+</style>
+</head>
+<body>
+<video id="pratinjau" autoplay muted playsinline poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></video>
+<script src="livekit-client.umd.js"></script>
+<script src="bersama.js"></script>
+<script src="hati.js"></script>
+<script>
+'use strict';
+const { Room, RoomEvent, Track, VideoPreset, createLocalVideoTrack, createLocalAudioTrack } = LivekitClient;
+const { kirim } = Siaran;
+const pratinjau = document.getElementById('pratinjau');
+
+// Pesan galat ke Contract, dalam isi.bahasa (bersama.js). "id" sama persis dengan sebelum ada terjemahan.
+const TEKS = {
+  id: {
+    kameraGagal: 'Kamera tidak bisa dibuka ({alasan}).',
+    sambungGagal: 'Siaran gagal tersambung ({alasan}).',
+    // Alasan sambungGagal bila kamera tak pernah menyala.
+    kameraMati: 'kamera mati',
+  },
+  en: {
+    kameraGagal: "Couldn't open the camera ({alasan}).",
+    sambungGagal: "The broadcast couldn't connect ({alasan}).",
+    kameraMati: 'camera is off',
+  },
+};
+const teks = Siaran.penerjemah(TEKS);
+
+// PROFIL_SIARAN laporin-apps (lib/kualitas-live.ts): tangkapan kamera, lapisan atas, dan dua lapisan simulcast.
+const PROFIL = {
+  fhd60: { lebar: 1920, tinggi: 1080, fps: 60, bitrate: 5000000, bawah: [[320, 180, 160000, 15], [640, 360, 600000, 30]] },
+  otomatis: { lebar: 1280, tinggi: 720, fps: 60, bitrate: 3000000, bawah: [[320, 180, 160000, 15], [640, 360, 600000, 30]] },
+  hd30: { lebar: 1280, tinggi: 720, fps: 30, bitrate: 1700000, bawah: [[320, 180, 160000, 15], [640, 360, 600000, 30]] },
+  hemat: { lebar: 960, tinggi: 540, fps: 25, bitrate: 800000, bawah: [[320, 180, 160000, 15], [640, 360, 450000, 25]] },
+};
+
+let trekVideo = null;
+let trekSuara = null;
+let ruang = null;
+let menyambung = false;
+let hadap = 'environment';
+let mutu = 'otomatis';
+let akhiriKe = null;
+let komentarKe = null;
+let sukaKe = null;
+let bisu = false;
+let suka = 0;
+let lokasi = null;
+let publik = false;
+let terhubung = false;
+
+const profil = () => PROFIL[mutu] || PROFIL.otomatis;
+
+/**
+ * Kamera HP sesuai kualitas pilihan (kamera yang menolak ukuran itu memakai bawaannya), lalu suara dengan peredam gema.
+ * Diminta terpisah: mikrofon yang gagal (izin ditolak, emulator tanpa masukan suara) tidak menggagalkan kamera;
+ * siarannya tanpa suara, seperti laporin-apps.
+ */
+async function nyalakanKamera() {
+  let galat = null;
+  const p = profil();
+  try {
+    trekVideo = await createLocalVideoTrack({ facingMode: hadap, resolution: { width: p.lebar, height: p.tinggi, frameRate: p.fps } });
+  } catch (e) {
+    try {
+      trekVideo = await createLocalVideoTrack({ facingMode: hadap });
+    } catch (e2) {
+      galat = e2;
+    }
+  }
+  if (!trekVideo) return kirim(`galat ${teks('kameraGagal', { alasan: galat.name || galat.message })}`);
+  trekVideo.attach(pratinjau);
+  kirim('kamera');
+  try {
+    trekSuara = await createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true });
+  } catch (e) {
+    kirim('tanpa-suara');
+  }
+}
+
+function terbitkanVideo() {
+  const p = profil();
+  // H.264 seperti siaran-live.tsx laporin-apps: di HP Android di-encode perangkat keras. Bawaan LiveKit (VP8) di
+  // WebView umumnya perangkat lunak, dan 720p/1080p 60 fps + dua lapisan simulcast menghabiskan CPU HP sampai
+  // aplikasi tidak menanggapi ketukan (Akhiri pun tidak). Bila H.264 tidak tersedia, LiveKit kembali ke VP8.
+  return ruang.localParticipant.publishTrack(trekVideo, {
+    source: Track.Source.Camera,
+    videoCodec: 'h264',
+    // Tanpa codec cadangan (encoder kedua yang ikut memanaskan HP); saat HP atau sinyal keberatan, ukurannya yang
+    // turun, gerakan tetap halus. Keduanya seperti OPSI_RUANG laporin-apps.
+    backupCodec: false,
+    degradationPreference: 'maintain-framerate',
+    simulcast: true,
+    videoEncoding: { maxBitrate: p.bitrate, maxFramerate: p.fps },
+    videoSimulcastLayers: p.bawah.map(([w, h, b, f]) => new VideoPreset(w, h, b, f)),
+  });
+}
+
+function hitungPenonton() {
+  if (!ruang) return;
+  // Pelapor sendiri dan pratinjau beranda (peserta tersembunyi, tidak terdaftar di sini) tidak dihitung.
+  kirim(`penonton ${ruang.remoteParticipants.size}`);
+  Siaran.daftar(ruang, null);
+}
+
+function aturLokasi() {
+  if (!ruang || !lokasi) return;
+  // Siaran publik hanya membagikan perkiraan (2 desimal, ±1 km) lewat atribut yang terbaca semua penonton.
+  const d = publik ? 2 : 6;
+  ruang.localParticipant
+    .setAttributes({ lat: lokasi.lat.toFixed(d), lng: lokasi.lng.toFixed(d), waktu: String(Date.now()) })
+    .catch(() => {});
+}
+
+// Pil sinyal: mutu sambungan dari LiveKit, resolusi dan laju lapisan teratas yang benar-benar terkirim.
+let terkirimLalu = null;
+/** Sampel berbingkai terakhir { lebar, tinggi, fps, bps }: labelnya disusun saat dikirim, dalam bahasa kini. */
+let sampelLalu = null;
+let tertahanLalu = 0;
+let lapisanLalu = '';
+async function ukurSinyal() {
+  if (!ruang || !trekVideo) return;
+  let sampel = null;
+  let tertahan = 0;
+  try {
+    const lapisan = await trekVideo.getSenderStats();
+    const kini = performance.now();
+    const byte = lapisan.reduce((n, l) => n + (l.bytesSent || 0), 0);
+    const atas = lapisan.filter((l) => l.frameHeight).sort((a, b) => b.frameHeight - a.frameHeight)[0];
+    if (atas && terkirimLalu) {
+      const bps = ((byte - terkirimLalu.byte) * 8 * 1000) / (kini - terkirimLalu.waktu);
+      sampel = { lebar: atas.frameWidth, tinggi: atas.frameHeight, fps: atas.framesPerSecond, bps };
+      tertahan = atas.qualityLimitationReason === 'bandwidth' || atas.qualityLimitationReason === 'cpu' ? 1 : 0;
+    }
+    terkirimLalu = { byte, waktu: kini };
+    // fps tiap lapisan untuk label kualitas penonton (ATRIBUT_LAPISAN laporin-apps).
+    const fps = {};
+    for (const l of lapisan) {
+      const i = { q: 0, h: 1, f: 2 }[l.rid];
+      if (i !== undefined && l.framesPerSecond > 0) fps[i] = Math.round(l.framesPerSecond);
+    }
+    const tulis = JSON.stringify(fps);
+    if (tulis !== '{}' && tulis !== lapisanLalu) {
+      lapisanLalu = tulis;
+      ruang.localParticipant.setAttributes({ lapisan: tulis }).catch(() => {});
+    }
+  } catch (e) {
+    terkirimLalu = null;
+  }
+  // Sampel tanpa bingkai (kamera lambat) memakai label sebelumnya, supaya pil tidak berkedip.
+  if (sampel) sampelLalu = sampel;
+  tertahanLalu = tertahan;
+  kirimSinyal();
+}
+
+/** "sinyal <mutu>\t<1 bila ditahan>\t<720p60 · 3,1 Mbps>" dari pengukuran terakhir (laju mengikuti bahasa). */
+function kirimSinyal() {
+  if (!ruang) return;
+  const s = sampelLalu;
+  const label = s ? `${Siaran.resolusi(s.lebar, s.tinggi, s.fps)} · ${Siaran.bitrate(s.bps)}` : '';
+  kirim(`sinyal ${ruang.localParticipant.connectionQuality || 'unknown'}\t${tertahanLalu}\t${label}`);
+}
+
+async function sambung(url, token) {
+  menyambung = true;
+  ruang = new Room({ dynacast: true, adaptiveStream: false });
+  ruang.registerTextStreamHandler('suka', async (reader) => {
+    const teks = await reader.readAll().catch(() => '1');
+    const n = Math.min(50, Math.max(1, parseInt(teks, 10) || 1));
+    suka += n;
+    kirim(`suka ${suka}`);
+    hatiTamu(n);
+  });
+  ruang.registerTextStreamHandler('komentar', async (reader, { identity }) => {
+    const teks = await reader.readAll().catch(() => null);
+    if (teks && ruang) Siaran.komentar(ruang, identity, teks);
+  });
+  ruang
+    .on(RoomEvent.ParticipantConnected, hitungPenonton)
+    .on(RoomEvent.ParticipantDisconnected, hitungPenonton)
+    .on(RoomEvent.ParticipantNameChanged, hitungPenonton)
+    .on(RoomEvent.ConnectionQualityChanged, ukurSinyal)
+    .on(RoomEvent.Reconnecting, () => kirim('putus-sementara'))
+    .on(RoomEvent.Reconnected, () => kirim('pulih'))
+    .on(RoomEvent.Disconnected, () => {
+      ruang = null;
+      kirim('berakhir');
+    });
+  try {
+    await ruang.connect(url, token);
+    await kameraSiap;
+    if (!trekVideo) throw new Error(teks('kameraMati'));
+    await terbitkanVideo();
+    if (trekSuara) {
+      await ruang.localParticipant.publishTrack(trekSuara, { source: Track.Source.Microphone });
+      if (bisu) await trekSuara.mute();
+    }
+    kirim('terhubung');
+    terhubung = true;
+    hitungPenonton();
+    aturLokasi();
+    setInterval(ukurSinyal, 2000);
+  } catch (e) {
+    kirim(`galat ${teks('sambungGagal', { alasan: e.message })}`);
+    if (ruang) await ruang.disconnect();
+  }
+}
+
+async function gantiKamera(ke) {
+  hadap = ke;
+  if (trekVideo) await trekVideo.restartTrack({ facingMode: hadap }).catch(() => {});
+}
+
+// Kualitas diganti di tengah siaran: kamera ditangkap ulang dan diterbitkan lagi dengan lapisan barunya.
+async function gantiMutu(ke) {
+  mutu = ke;
+  if (!trekVideo) return;
+  const p = profil();
+  kirim('mutu-ganti');
+  try {
+    if (ruang && ruang.localParticipant.getTrackPublication(Track.Source.Camera)) {
+      await ruang.localParticipant.unpublishTrack(trekVideo, false);
+    }
+    await trekVideo.restartTrack({ facingMode: hadap, resolution: { width: p.lebar, height: p.tinggi, frameRate: p.fps } });
+    if (ruang) await terbitkanVideo();
+  } catch (e) {
+    // Kamera yang menolak ukuran baru tetap menyiarkan ukuran lamanya.
+  }
+  terkirimLalu = null;
+  kirim('mutu-siap');
+}
+
+window.terima = function (teksJson) {
+  let d;
+  try { d = JSON.parse(teksJson); } catch (e) { return; }
+  // Bahasa berganti selagi siaran: daftar penonton (nama pengganti) dan pil sinyal (laju) dikirim ulang.
+  if (Siaran.aturBahasa(d.bahasa) && ruang && terhubung) {
+    hitungPenonton();
+    if (sampelLalu) kirimSinyal();
+  }
+  publik = d.publik === true;
+  if (d.hadap && d.hadap !== hadap) gantiKamera(d.hadap);
+  if (d.mutu && d.mutu !== mutu) {
+    if (trekVideo || ruang) gantiMutu(d.mutu);
+    else mutu = d.mutu;
+  }
+  if ((d.bisu === true) !== bisu) {
+    bisu = d.bisu === true;
+    if (trekSuara) (bisu ? trekSuara.mute() : trekSuara.unmute()).catch(() => {});
+  }
+  const k = d.komentar || { n: 0, teks: '' };
+  if (komentarKe === null) komentarKe = k.n;
+  else if (k.n !== komentarKe) {
+    komentarKe = k.n;
+    const isi = decodeURIComponent(k.teks || '').trim();
+    if (isi && ruang) ruang.localParticipant.sendText(isi, { topic: 'komentar' }).catch(() => {});
+  }
+  if (sukaKe === null) sukaKe = d.suka || 0;
+  else if ((d.suka || 0) !== sukaKe) {
+    sukaKe = d.suka || 0;
+    hatiSendiri();
+    suka += 1;
+    kirim(`suka ${suka}`);
+    if (ruang) ruang.localParticipant.sendText('1', { topic: 'suka' }).catch(() => {});
+  }
+  const lok = Array.isArray(d.lokasi) ? { lat: d.lokasi[0], lng: d.lokasi[1] } : null;
+  if (JSON.stringify(lok) !== JSON.stringify(lokasi)) {
+    lokasi = lok;
+    aturLokasi();
+  }
+  // Nilai pertama yang diterima hanya dicatat: halaman yang dibuka ulang tidak langsung berakhir.
+  if (akhiriKe === null) akhiriKe = d.akhiri;
+  else if (d.akhiri !== akhiriKe) {
+    akhiriKe = d.akhiri;
+    if (ruang) ruang.disconnect();
+    else kirim('berakhir');
+    return;
+  }
+  if (d.url && d.token && !menyambung) sambung(d.url, d.token);
+};
+
+// Kualitas pilihan sudah tiba sebelum kamera dinyalakan (isi dikirim saat halaman selesai dimuat).
+const kameraSiap = new Promise((r) => setTimeout(r, 0)).then(nyalakanKamera);
+</script>
+</body>
+</html>

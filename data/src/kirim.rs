@@ -12,9 +12,16 @@
 use exact_runner::{FailureKind, Outcome, Request};
 use serde_json::{json, Value as Json};
 
-use crate::{simpan, teks};
+use crate::teks::{self, dua};
+use crate::simpan;
 
 pub const API: &str = env!("LAPORIN_API");
+
+/// Halaman Turnstile server untuk kiriman tanpa akun, atau "" bila server laporannya mock-server lewat http (WebView
+/// Android menolak http polos, dan mock meloloskan `mock-captcha` tanpa halaman).
+pub fn alamat_captcha() -> String {
+    if API.starts_with("https://") { format!("{API}/api/mobile/captcha") } else { String::new() }
+}
 
 const SISI_MAKS: u32 = 2048;
 const BITA_MAKS: u32 = 1_500_000;
@@ -32,6 +39,9 @@ pub struct Isian {
     pub lampiran: Vec<String>,
     /// Titik GPS saat formulir dibuka, bila ada.
     pub lokasi: Option<(f64, f64)>,
+    /// Token Turnstile dari halaman `/api/mobile/captcha` (lembar Verifikasi singkat) untuk kiriman tanpa akun; kosong
+    /// di mock-server, yang meloloskan token `mock-captcha`.
+    pub captcha: String,
 }
 
 #[derive(Debug)]
@@ -68,7 +78,16 @@ fn sementara(i: usize) -> String {
 fn tak_terjangkau() -> Langkah {
     Langkah::Selesai(
         false,
-        format!("Server laporan tidak terjangkau ({API}). Jalankan `npm run mock` di laporin-apps, lalu `adb reverse tcp:4000 tcp:4000`."),
+        match (API.starts_with("https://"), teks::inggris()) {
+            (true, false) => "Server laporan tidak terjangkau. Periksa koneksi lalu coba lagi.".into(),
+            (true, true) => "Can't reach the report server. Check your connection and try again.".into(),
+            (false, false) => format!(
+                "Server laporan tidak terjangkau ({API}). Jalankan `npm run mock` di laporin-apps, lalu `adb reverse tcp:4000 tcp:4000`."
+            ),
+            (false, true) => format!(
+                "Can't reach the report server ({API}). Run `npm run mock` in laporin-apps, then `adb reverse tcp:4000 tcp:4000`."
+            ),
+        },
     )
 }
 
@@ -77,11 +96,16 @@ fn galat_server(status: u16, body: &[u8]) -> String {
     serde_json::from_slice::<Json>(body)
         .ok()
         .and_then(|j| j.get("galat").and_then(Json::as_str).map(str::to_string))
-        .unwrap_or_else(|| format!("Server menolak laporan (HTTP {status})."))
+        .unwrap_or_else(|| dua!(format!("Server menolak laporan (HTTP {status})."), format!("The server rejected the report (HTTP {status}).")))
 }
 
-/// Body multipart/form-data (RFC 7578) dengan batas yang tidak muncul di isi mana pun.
+/// Body multipart/form-data (RFC 7578) dengan batas yang tidak muncul di isi mana pun; berkas di bagian `berkas`.
 pub fn multipart(kolom: &[(&str, &str)], berkas: &[Vec<u8>]) -> (String, Vec<u8>) {
+    multipart_bernama(kolom, "berkas", berkas)
+}
+
+/// Seperti [`multipart`], dengan nama bagian berkas sendiri (verifikasi KTP: `ktp`, berkas `ktp.jpg`).
+pub fn multipart_bernama(kolom: &[(&str, &str)], nama_berkas: &str, berkas: &[Vec<u8>]) -> (String, Vec<u8>) {
     let mut batas = String::from("laporin-exact-batas-7f3a");
     while kolom.iter().any(|(_, v)| v.contains(&batas)) || berkas.iter().any(|b| b.windows(batas.len()).any(|w| w == batas.as_bytes())) {
         batas.push(BATAS);
@@ -93,8 +117,11 @@ pub fn multipart(kolom: &[(&str, &str)], berkas: &[Vec<u8>]) -> (String, Vec<u8>
     }
     for (i, isi) in berkas.iter().enumerate() {
         body.extend_from_slice(
-            format!("--{batas}\r\nContent-Disposition: form-data; name=\"berkas\"; filename=\"foto-{}.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n", i + 1)
-                .as_bytes(),
+            format!(
+                "--{batas}\r\nContent-Disposition: form-data; name=\"{nama_berkas}\"; filename=\"{}\"\r\nContent-Type: image/jpeg\r\n\r\n",
+                if nama_berkas == "berkas" { format!("foto-{}.jpg", i + 1) } else { format!("{nama_berkas}.jpg") }
+            )
+            .as_bytes(),
         );
         body.extend_from_slice(isi);
         body.extend_from_slice(b"\r\n");
@@ -107,24 +134,26 @@ impl Kiriman {
     /// Kiriman baru dan permintaan pertamanya (tiket captcha), atau penolakan isian langsung.
     pub fn mulai(isian: Isian, token: Option<String>) -> Result<(Kiriman, Request), String> {
         if isian.judul.trim().is_empty() {
-            return Err("Isi judul singkat dulu.".into());
+            return Err(dua!("Isi judul singkat dulu.", "Add a short title first.").into());
         }
         if isian.deskripsi.trim().is_empty() {
-            return Err("Ceritakan kondisinya sedikit.".into());
+            return Err(dua!("Ceritakan kondisinya sedikit.", "Briefly describe the situation.").into());
         }
         if isian.lampiran.is_empty() {
-            return Err("Sertakan minimal satu foto sebagai bukti.".into());
+            return Err(dua!("Sertakan minimal satu foto sebagai bukti.", "Attach at least one photo as evidence.").into());
         }
         if isian.lampiran.len() > 6 {
-            return Err("Maksimal 6 foto per laporan.".into());
+            return Err(dua!("Maksimal 6 foto per laporan.", "Up to 6 photos per report.").into());
         }
         let token = token.filter(|_| !isian.anonim);
         let mut kiriman = Kiriman { isian, tahap: Tahap::Tiket, tiket: String::new(), token, berkas: Vec::new() };
         let minta = if kiriman.token.is_some() {
             kiriman.minta_perkecil(0)
         } else {
-            // Mock-server: halaman captcha-nya langsung lolos dengan token ini (laporin-apps mock-server/server.mjs).
-            Request::post_json(&format!("{API}/api/mobile/tiket"), r#"{"token":"mock-captcha"}"#).timeout(15_000)
+            // Token Turnstile ditukar dengan tiket sekali pakai. Mock-server meloloskan `mock-captcha` (laporin-apps
+            // mock-server/server.mjs), jadi tanpa token dari lembar verifikasi itu yang dikirim.
+            let captcha = if kiriman.isian.captcha.is_empty() { "mock-captcha" } else { kiriman.isian.captcha.as_str() };
+            Request::post_json(&format!("{API}/api/mobile/tiket"), &json!({ "token": captcha }).to_string()).timeout(20_000)
         };
         Ok((kiriman, minta))
     }
@@ -181,7 +210,10 @@ impl Kiriman {
                             self.tiket = t;
                             self.perkecil(0)
                         }
-                        None => Langkah::Selesai(false, "Server tidak memberi tiket captcha.".into()),
+                        None => Langkah::Selesai(
+                            false,
+                            dua!("Server tidak memberi tiket captcha.", "The server didn't issue a captcha ticket.").into(),
+                        ),
                     }
                 }
                 Outcome::Response(r) => Langkah::Selesai(false, galat_server(r.status, &r.body)),
@@ -193,7 +225,13 @@ impl Kiriman {
                     self.tahap = Tahap::Baca(i);
                     Langkah::Minta(exact_data::storage::request("fs.readFile", json!({ "path": jalur })))
                 }
-                Err(e) => Langkah::Selesai(false, format!("Foto {} tidak bisa diproses ({} → {}): {e}", i + 1, self.isian.lampiran[i], sementara(i))),
+                Err(e) => Langkah::Selesai(
+                    false,
+                    dua!(
+                        format!("Foto {} tidak bisa diproses ({} → {}): {e}", i + 1, self.isian.lampiran[i], sementara(i)),
+                        format!("Photo {} couldn't be processed ({} → {}): {e}", i + 1, self.isian.lampiran[i], sementara(i))
+                    ),
+                ),
             },
             Tahap::Baca(i) => {
                 let isi = exact_data::storage::response(outcome)
@@ -208,7 +246,10 @@ impl Kiriman {
                             self.unggah()
                         }
                     }
-                    None => Langkah::Selesai(false, format!("Foto {} tidak bisa dibaca.", i + 1)),
+                    None => Langkah::Selesai(
+                        false,
+                        dua!(format!("Foto {} tidak bisa dibaca.", i + 1), format!("Photo {} couldn't be read.", i + 1)),
+                    ),
                 }
             }
             Tahap::Unggah => match outcome {
@@ -218,7 +259,14 @@ impl Kiriman {
                 }
                 Outcome::Response(r) => Langkah::Selesai(false, galat_server(r.status, &r.body)),
                 Outcome::Failed { kind: FailureKind::Timeout, .. } => {
-                    Langkah::Selesai(false, "Unggahan terlalu lama. Periksa koneksi lalu coba lagi.".into())
+                    Langkah::Selesai(
+                        false,
+                        dua!(
+                            "Unggahan terlalu lama. Periksa koneksi lalu coba lagi.",
+                            "The upload took too long. Check your connection and try again."
+                        )
+                        .into(),
+                    )
                 }
                 _ => tak_terjangkau(),
             },
@@ -270,6 +318,7 @@ mod uji {
             selisih_menit: 420.0,
             lampiran: (0..lampiran).map(|i| format!("app:/tmp/pilih/{i}")).collect(),
             lokasi: None,
+            captcha: String::new(),
         }
     }
 
@@ -279,6 +328,16 @@ mod uji {
         assert_eq!(Kiriman::mulai(isian(7), None).err().unwrap(), "Maksimal 6 foto per laporan.");
         let (_, minta) = Kiriman::mulai(isian(1), None).unwrap();
         assert_eq!(minta.url, format!("{API}/api/mobile/tiket"));
+    }
+
+    #[test]
+    fn token_captcha_ditukar_jadi_tiket() {
+        let mut i = isian(1);
+        i.captcha = "0.turnstile-abc".into();
+        let (_, minta) = Kiriman::mulai(i, None).unwrap();
+        assert_eq!(String::from_utf8_lossy(&minta.body), r#"{"token":"0.turnstile-abc"}"#);
+        let (_, minta) = Kiriman::mulai(isian(1), None).unwrap();
+        assert_eq!(String::from_utf8_lossy(&minta.body), r#"{"token":"mock-captcha"}"#);
     }
 
     #[test]

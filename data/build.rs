@@ -4,6 +4,8 @@
 //! `LAPORIN_API` (bawaan `http://127.0.0.1:4000`, mock-server laporin-apps lewat `adb reverse`)
 //! dipanggang saat build: grant `net.fetch` harus sama di Mac (bake) dan di HP.
 //!
+//! `LAPORIN_GOOGLE_KLIEN` (bawaan kosong) adalah client ID web Google untuk Masuk dengan Google.
+//!
 //! `LAPORIN_SITUS` (bawaan sama dengan `LAPORIN_API`) adalah asal umpan, gambar dan komentar, seperti
 //! `EXPO_PUBLIC_SITUS_URL` laporin-apps: mock-server meneruskan produksi dan menambahkan suka & komentar
 //! mock, jadi komentar dari satu HP terlihat di HP lain. `https://fire.nusantara.earth` = produksi langsung.
@@ -27,4 +29,10 @@ fn main() {
     // Asal grant `net.fetch` situs: produksi bila situs = LAPORIN_API (yang sudah punya grant sendiri).
     let grant = if situs == api { "https://fire.nusantara.earth" } else { &situs };
     println!("cargo:rustc-env=LAPORIN_GRANT_SITUS={grant}");
+
+    // Client ID web Google (aud idToken yang diterima server, EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID laporin-apps). Kosong =
+    // tombol Masuk dengan Google menjelaskan bahwa build ini belum disiapkan.
+    println!("cargo:rerun-if-env-changed=LAPORIN_GOOGLE_KLIEN");
+    let klien = std::env::var("LAPORIN_GOOGLE_KLIEN").unwrap_or_default();
+    println!("cargo:rustc-env=LAPORIN_GOOGLE_KLIEN={}", klien.trim());
 }

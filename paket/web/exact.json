@@ -7,9 +7,13 @@
   "views": {
     "web-halaman": {
       "props": {
-        "alamat": "string"
+        "alamat": "string",
+        "kunci": "option<string>",
+        "isi": "option<string>"
       },
-      "events": ["message"]
+      "events": [
+        "message"
+      ]
     }
   },
   "names": []

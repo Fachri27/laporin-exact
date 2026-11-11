@@ -5,7 +5,7 @@ name = "laporin-exact-data"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Inti Rust Laporin: umpan, komentar, olahan hotspot, laporan tersimpan"
+description = "Inti Rust Laporin: umpan, komentar, akun, kirim laporan, laporan tersimpan"
 publish = false
 
 [lib]
@@ -17,6 +17,8 @@ exact-plan = { path = "../../exact/plan" }
 exact-runner = { path = "../../exact/runner" }
 exact-data = { path = "../../exact/data" }
 serde_json = "1.0"
+# Membuka balasan JSON situs yang dimampatkan gzip (transport host tidak membukanya sendiri).
+flate2 = "1.1"
 
 [build-dependencies]
 contract = { path = "../../exact/contract/cli" }

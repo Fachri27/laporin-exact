@@ -14,7 +14,7 @@ use serde_json::{json, Value as Json};
 
 use crate::kirim::API;
 use crate::shapes::{LaporanAkun, Sesi};
-use crate::teks;
+use crate::teks::{self, dua};
 
 pub const KUNCI_SESI: &str = "sesi-laporin";
 pub const BERKAS_SESI: &str = "app:/data/sesi.json";
@@ -61,8 +61,10 @@ fn dengan_token(minta: Request, token: &str) -> Request {
     minta.header("authorization", &format!("Bearer {token}")).header("accept", "application/json").timeout(15_000)
 }
 
-pub fn minta_masuk_uji(nama: &str) -> Request {
-    Request::post_json(&format!("{API}/api/mobile/masuk/uji"), &json!({ "nama": nama }).to_string())
+/// `POST /masuk/google { idToken }`: idToken dari Masuk dengan Google native (paket/masuk-google), audiensnya client
+/// ID web yang sama dengan `GOOGLE_WEB_CLIENT_ID` server. Token yang tidak sah = 401 `{ galat }`.
+pub fn minta_masuk_google(id_token: &str) -> Request {
+    Request::post_json(&format!("{API}/api/mobile/masuk/google"), &json!({ "idToken": id_token }).to_string())
         .header("accept", "application/json")
         .timeout(15_000)
 }
@@ -82,6 +84,13 @@ pub fn minta_daftar(nama: &str, email: &str, sandi: &str) -> Request {
 
 pub fn minta_keluar(token: &str) -> Request {
     dengan_token(Request::post_json(&format!("{API}/api/mobile/keluar"), "{}"), token)
+}
+
+/// `DELETE /api/mobile/saya`: hapus akun (sesi, suka; nama dan email dari komentar; laporan tetap tanpa nama). Bisa lama
+/// di server, jadi batasnya 60 detik seperti aslinya: batas 15 detik bisa memutus padahal akunnya sudah terhapus.
+pub fn minta_hapus(token: &str) -> Request {
+    let minta = Request { method: "DELETE".into(), ..Request::get(&format!("{API}/api/mobile/saya")) };
+    dengan_token(minta, token).timeout(60_000)
 }
 
 pub fn minta_profil(token: &str) -> Request {
@@ -127,8 +136,16 @@ pub fn galat(outcome: &Outcome) -> String {
         Outcome::Response(r) => serde_json::from_slice::<Json>(&r.body)
             .ok()
             .and_then(|j| j["galat"].as_str().map(str::to_string))
-            .unwrap_or_else(|| format!("Server menolak (HTTP {}).", r.status)),
-        _ => format!("Server akun tidak terjangkau ({API}). Jalankan `npm run mock` di laporin-apps."),
+            .unwrap_or_else(|| dua!(format!("Server menolak (HTTP {}).", r.status), format!("The server refused (HTTP {}).", r.status))),
+        // Petunjuk mock-server hanya untuk build pengembangan (API http lokal), seperti tak_terjangkau di kirim.rs.
+        _ if API.starts_with("https://") => dua!(
+            "Server akun tidak terjangkau. Periksa koneksi lalu coba lagi.".to_string(),
+            "Can't reach the account server. Check your connection and try again.".to_string()
+        ),
+        _ => dua!(
+            format!("Server akun tidak terjangkau ({API}). Jalankan `npm run mock` di laporin-apps."),
+            format!("Can't reach the account server ({API}). Run `npm run mock` in laporin-apps.")
+        ),
     }
 }
 
@@ -138,13 +155,19 @@ pub fn simpan_masuk(store: &mut Store, outcome: &Outcome) -> Result<String, Stri
     if !(200..300).contains(&r.status) {
         return Err(galat(outcome));
     }
-    let j: Json = serde_json::from_slice(&r.body).map_err(|e| format!("Balasan masuk rusak: {e}"))?;
-    let token = j["token"].as_str().filter(|t| !t.is_empty()).ok_or("Server tidak memberi token.")?;
+    let j: Json = serde_json::from_slice(&r.body)
+        .map_err(|e| dua!(format!("Balasan masuk rusak: {e}"), format!("Invalid sign-in response: {e}")))?;
+    let token = j["token"]
+        .as_str()
+        .filter(|t| !t.is_empty())
+        .ok_or(dua!("Server tidak memberi token.", "The server didn't return a token."))?;
     let p = &j["pengguna"];
     let nama = p["nama"].as_str().unwrap_or("").to_string();
     let sesi = json!({ "token": token, "nama": nama, "email": p["email"].as_str().unwrap_or("") });
     let _ = nama;
-    store.set(KUNCI_SESI, &sesi.to_string()).map_err(|e| format!("Sesi tidak bisa disimpan: {e:?}"))?;
+    store
+        .set(KUNCI_SESI, &sesi.to_string())
+        .map_err(|e| dua!(format!("Sesi tidak bisa disimpan: {e:?}"), format!("Couldn't save the session: {e:?}")))?;
     Ok(sesi.to_string())
 }
 
@@ -189,8 +212,9 @@ pub fn disukai(store: &mut Store, outcome: &Outcome) -> Result<Vec<String>, Stri
             Ok(Vec::new())
         }
         Outcome::Response(r) if (200..300).contains(&r.status) => {
-            let j: Json = serde_json::from_slice(&r.body).map_err(|e| format!("JSON disukai: {e}"))?;
-            let butir = j["disukai"].as_array().ok_or("disukai bukan larik")?;
+            let j: Json =
+                serde_json::from_slice(&r.body).map_err(|e| dua!(format!("JSON disukai: {e}"), format!("Likes JSON: {e}")))?;
+            let butir = j["disukai"].as_array().ok_or(dua!("disukai bukan larik", "likes is not an array"))?;
             Ok(butir
                 .iter()
                 .filter_map(|v| v.as_i64().map(|n| n.to_string()).or_else(|| v.as_str().map(str::to_string)))
@@ -208,8 +232,9 @@ pub fn laporan(store: &mut Store, outcome: &Outcome) -> Result<Vec<LaporanAkun>,
             Ok(Vec::new())
         }
         Outcome::Response(r) if (200..300).contains(&r.status) => {
-            let j: Json = serde_json::from_slice(&r.body).map_err(|e| format!("JSON laporan saya: {e}"))?;
-            let butir = j["laporan"].as_array().ok_or("laporan bukan larik")?;
+            let j: Json = serde_json::from_slice(&r.body)
+                .map_err(|e| dua!(format!("JSON laporan saya: {e}"), format!("My reports JSON: {e}")))?;
+            let butir = j["laporan"].as_array().ok_or(dua!("laporan bukan larik", "reports is not an array"))?;
             Ok(butir
                 .iter()
                 .map(|l| LaporanAkun {

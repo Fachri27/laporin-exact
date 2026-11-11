@@ -5,7 +5,7 @@ use exact_runner::{Outcome, Request};
 use serde_json::{json, Value as Json};
 
 use crate::shapes::LaporanSaya;
-use crate::teks;
+use crate::teks::{self, dua};
 
 pub const BERKAS: &str = "app:/data/laporan-saya.json";
 
@@ -35,14 +35,14 @@ pub fn baca_balasan(outcome: Outcome) -> Result<Balasan, String> {
     match exact_data::storage::response(outcome) {
         Ok(Json::Null) => Ok(Balasan::Tertulis),
         Ok(v) => {
-            let b64 = v.get("base64").and_then(Json::as_str).ok_or("balasan baca tanpa base64")?;
-            let bita = teks::base64(b64).ok_or("base64 rusak")?;
+            let b64 = v.get("base64").and_then(Json::as_str).ok_or(dua!("balasan baca tanpa base64", "read reply without base64"))?;
+            let bita = teks::base64(b64).ok_or(dua!("base64 rusak", "invalid base64"))?;
             if bita.iter().all(u8::is_ascii_whitespace) {
                 return Ok(Balasan::Isi(Vec::new()));
             }
-            match serde_json::from_slice::<Json>(&bita).map_err(|e| format!("isi berkas: {e}"))? {
+            match serde_json::from_slice::<Json>(&bita).map_err(|e| dua!(format!("isi berkas: {e}"), format!("file contents: {e}")))? {
                 Json::Array(a) => Ok(Balasan::Isi(a)),
-                _ => Err("isi berkas bukan larik".into()),
+                _ => Err(dua!("isi berkas bukan larik", "file contents are not an array").into()),
             }
         }
         Err(e) if belum_ada(&e) => Ok(Balasan::Isi(Vec::new())),
@@ -52,7 +52,8 @@ pub fn baca_balasan(outcome: Outcome) -> Result<Balasan, String> {
 
 /// Catatan baru di depan daftar (terbaru dulu). `id` dari waktu kirim, unik per milidetik.
 /// `anonim` dibedakan dari nama yang dikosongkan: keduanya tanpa `pengirim`, tetapi hanya anonim yang
-/// meminta server tidak mengaitkan laporan ke siapa pun.
+/// meminta server tidak mengaitkan laporan ke siapa pun. `dibuat` tetap ditulis (catatan lama dan pembaca lain);
+/// `dibuatMs` dan `selisihMenit` membuatnya diformat ulang dalam bahasa aktif saat dibaca.
 pub fn catatan(judul: &str, deskripsi: &str, nama: &str, anonim: bool, epoch_ms: f64, selisih_menit: f64) -> Json {
     json!({
         "id": format!("{}", epoch_ms.round() as i64),
@@ -62,6 +63,8 @@ pub fn catatan(judul: &str, deskripsi: &str, nama: &str, anonim: bool, epoch_ms:
         "anonim": anonim,
         "status": "menunggu",
         "dibuat": teks::waktu_singkat(epoch_ms, selisih_menit),
+        "dibuatMs": epoch_ms,
+        "selisihMenit": selisih_menit,
     })
 }
 
@@ -75,7 +78,11 @@ pub fn ke_laporan(semua: &[Json]) -> Vec<LaporanSaya> {
             deskripsi: teks_di(j, "deskripsi"),
             pengirim: teks_di(j, "pengirim"),
             status: teks_di(j, "status"),
-            dibuat: teks_di(j, "dibuat"),
+            // Catatan sebelum `dibuatMs` ada tetap memakai teks yang tersimpan.
+            dibuat: match (j.get("dibuatMs").and_then(Json::as_f64), j.get("selisihMenit").and_then(Json::as_f64)) {
+                (Some(ms), Some(selisih)) => teks::waktu_singkat(ms, selisih),
+                _ => teks_di(j, "dibuat"),
+            },
             lampiran: j.get("lampiran").and_then(Json::as_f64).unwrap_or(0.0),
             anonim: j.get("anonim").and_then(Json::as_bool).unwrap_or(false),
         })

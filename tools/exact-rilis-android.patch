@@ -1,0 +1,115 @@
+--- a/scripts/agent-android.mjs
++++ b/scripts/agent-android.mjs
+@@ -74,7 +74,12 @@
+   // A TypeScript data module's lean Hermes VM: the Android bundle
+   // `hermes-android.mjs build` made, for the target only (the host keeps its pinned one).
+   const hermes = env.HERMES_LEAN_SYS_DIR_aarch64_linux_android ?? hermesAndroidBundle();
++  // Google Play requires 16 KB page alignment for apps targeting Android 15+ (and some devices run 16 KB pages): the
++  // library's LOAD segments are aligned to it, beside any rustflags the environment already gives the target.
++  const pages = '-C link-arg=-Wl,-z,max-page-size=16384';
++  const rustflags = [env.CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS, pages].filter(Boolean).join(' ');
+   return { ...cargoEnvironment(env), ANDROID_NDK_HOME: ndk, CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: cc, CC_aarch64_linux_android: cc,
++    CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS: rustflags,
+     CXX_aarch64_linux_android: `${cc}++`, AR_aarch64_linux_android: resolve(bin, 'llvm-ar'),
+     // One C++ runtime, static, as the Hermes bundle links it (ANDROID_STL=c++_static):
+     // the cc crate's Android default, c++_shared, needs libc++_shared.so beside the binary.
+@@ -330,7 +335,7 @@
+  * Linux bake is (`buildBake`): the module first, then the library with the module's digest baked in, so the module
+  * ships beside it and must reach the device byte for byte (the Gradle shell extracts it and keeps its symbols).
+  * Gradle wants a JDK (17 or newer) and the SDK's platform. The APK's path, or null. */
+-function buildApk(app, env, profile, writeLocks = false) {
++function buildApk(app, env, profile, writeLocks = false, bundle = false) {
+   const crate = app.crate('android');
+   if (!app.manifest.game && !crateManifest(app, 'android')) throw new Error(`${app.dir} has no android/ crate, the app's library for the Canvas host: bun exact.mjs update adds one to an app that names android in app.json (apps/shelf/android is one)`);
+   const built = (name) => resolve(app.target, ANDROID_TARGET, profile, `lib${name.replaceAll('-', '_')}.so`);
+@@ -371,7 +376,8 @@
+   if (!graph) return null;
+   let gradle;
+   try {
+-    gradle = spawnSync(resolve(READER, 'gradlew'), [':app:assembleRelease', `-Papp=${app.name}`, `-PappDir=${app.manifest.game ? app.workspace : app.dir}`,
++    // `--bundle`: the Android App Bundle Google Play takes, in place of the APK.
++    gradle = spawnSync(resolve(READER, 'gradlew'), [bundle ? ':app:bundleRelease' : ':app:assembleRelease', `-Papp=${app.name}`, `-PappDir=${app.manifest.game ? app.workspace : app.dir}`,
+       `-PexactDevelopment=${development ? '1' : '0'}`,
+       `-PappBuildDir=${dirs.app}`, `-PcanvasBuildDir=${dirs.canvas}`, `-PndkPath=${env.ANDROID_NDK_HOME}`, '--project-cache-dir', dirs.cache, `-Pkotlin.project.persistent.dir=${dirs.kotlin}`,
+       ...(gpu ? [`-PgpuModule=${basename(gpu)}`] : []), ...compose, ...extensionArgs(app, out, config), ...graph.args], { cwd: READER, env: { ...env, ANDROID_HOME: androidSdk(env) }, stdio: 'inherit' });
+@@ -380,6 +386,7 @@
+     graph.done();
+   }
+   if (gradle.status !== 0) return null;
++  if (bundle) return resolve(apkDirs(app).app, 'outputs/bundle/release/app-release.aab');
+   const apk = readerApk(app);
+   writeFileSync(resolve(dirname(apk), 'exact-build.json'), JSON.stringify({ started, library: built(crate), workspace: app.workspace ?? app.dir,
+     sources: [...READER_SOURCES, ...[resolve(app.dir, 'modules/android')].filter(existsSync)] }) + '\n');
+@@ -566,9 +573,12 @@
+   }
+   if (apkWanted) {
+     const started = Date.now();
+-    const apk = buildApk(app, env, args.includes('--release') ? 'release' : HOST_DEV, args.includes('--write-locks'));
++    const bundle = args.includes('--bundle');
++    const apk = buildApk(app, env, args.includes('--release') ? 'release' : HOST_DEV, args.includes('--write-locks'), bundle);
+     if (!apk) process.exit(1);
+     console.log(apk);
++    // A bundle is for Google Play: nothing installs it.
++    if (bundle) process.exit(0);
+     if (args.includes('--install') || args.includes('--run')) process.exit(installApk(app, apk, { run: args.includes('--run'), built: Date.now() - started }));
+     process.exit(0);
+   }
+--- a/scripts/help.mjs
++++ b/scripts/help.mjs
+@@ -311,7 +311,8 @@
+     ],
+     // `--apk --install` are the verb's own; --release builds the release profile, for measuring; --write-locks writes
+     // the Gradle lock and verification files of an app whose modules name Maven libraries.
+-    internal: ['--apk', '--install', '--release', '--write-locks'],
++    // --bundle builds the Android App Bundle for Google Play (signed with -PuploadKeystore when given) and installs nothing.
++    internal: ['--apk', '--install', '--release', '--write-locks', '--bundle'],
+     body: `Builds android/ for aarch64-linux-android, packages it with exact2's Canvas reader
+ (host/android) into an APK under target/android/, prints its path and installs it on the
+ device: ANDROID_SERIAL, else the one adb lists (with several and none named, it refuses).
+--- a/host/android/app/build.gradle.kts
++++ b/host/android/app/build.gradle.kts
+@@ -44,13 +44,15 @@
+     compileSdk { version = release(37) { minorApiLevel = 2 } }
+     defaultConfig {
+         // An Android package name's segments are Java identifiers: a manifest id's `-` becomes `_`.
+-        applicationId = (identity["id"] as String).replace('-', '_')
++        // -PreleaseApplicationId: the store's package when it is not the manifest's id (an app taking over a listing).
++        applicationId = providers.gradleProperty("releaseApplicationId").orNull ?: (identity["id"] as String).replace('-', '_')
+         minSdk = minimumApi
+         targetSdk = 36
+-        versionCode = 1
++        // -PversionCode / -PversionName: a store upload's, which each upload raises; 1 for local builds.
++        versionCode = providers.gradleProperty("versionCode").orNull?.toInt() ?: 1
+         // -PidSuffix=.dev: a side-by-side build (another package) that leaves the installed one alone.
+         (project.findProperty("idSuffix") as String?)?.let { applicationIdSuffix = it }
+-        versionName = "1"
++        versionName = providers.gradleProperty("versionName").orNull ?: "1"
+         ndk { abiFilters += "arm64-v8a" }
+         manifestPlaceholders["appName"] = identity["name"] as String
+         // The launcher icon agent-android.mjs makes from app.json's `icons` (`-PappIconRes`), else the platform's.
+@@ -59,12 +61,24 @@
+         manifestPlaceholders["screenOrientation"] = screenOrientation
+         manifestPlaceholders["exactDevelopment"] = providers.gradleProperty("exactDevelopment").orNull == "1"
+     }
++    // Google Play's upload key: -PuploadKeystore names the keystore, and its passwords and alias come from the
++    // environment (EXACT_UPLOAD_STORE_PASSWORD, EXACT_UPLOAD_KEY_ALIAS, EXACT_UPLOAD_KEY_PASSWORD), never a file.
++    // Without it a release is signed with the debug key, as every local build.
++    val uploadKeystore = providers.gradleProperty("uploadKeystore").orNull
++    if (uploadKeystore != null) signingConfigs {
++        create("upload") {
++            storeFile = file(uploadKeystore)
++            storePassword = System.getenv("EXACT_UPLOAD_STORE_PASSWORD")
++            keyAlias = System.getenv("EXACT_UPLOAD_KEY_ALIAS")
++            keyPassword = System.getenv("EXACT_UPLOAD_KEY_PASSWORD")
++        }
++    }
+     buildTypes {
+         release {
+             isMinifyEnabled = true
+             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+             if (minimumApi < 31) proguardFiles("proguard-legacy.pro")
+-            signingConfig = signingConfigs.getByName("debug")
++            signingConfig = signingConfigs.getByName(if (uploadKeystore != null) "upload" else "debug")
+         }
+     }
+     // The app's Rust library (as libexactcanvas.so) and its assets (the reader copies `app/` out of the APK once).

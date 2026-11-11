@@ -1,0 +1,269 @@
+<!doctype html>
+<!--
+  Menonton siaran publik (layar Tonton): berlangganan kamera dan suara pelapor (identitas pelapor-…) di LiveKit,
+  seperti tonton-live.tsx laporin-apps. Halaman menampilkan video dan hati yang melayang; tombol dan teks digambar
+  Contract. Mode pratinjau (kartu tab Live, sorotan Beranda) hanya memutar video bisu sebagai peserta tersembunyi.
+
+  Masuk (window.terima, JSON):
+    { url, token, pratinjau, komentar: { n, teks }, suka: n, mutu: "otomatis" | "0" | "1" | "2", bahasa: "id" | "en" }
+    teks dikodekan encodeURIComponent; n yang naik = kirim; mutu angka = lapisan simulcast (0 terendah).
+    bahasa (tak ada = "id") = bahasa teks manusia di pesan keluar; berganti = daftar penonton, nama pelapor
+    pengganti, kualitas, dan lapisan dikirim ulang dalam bahasa baru.
+  Keluar (laporin.kirim):
+    "terhubung" · "video" (video pelapor tampil) · "menunggu" (pelapor terputus) · "pelapor <nama>"
+    · "penonton <n>" · "daftar <baris>" (bersama.js) · "suka <n>" (semua hati yang terlihat di layar ini)
+    · "komentar <peran>\t<nama>\t<isi>" · "kualitas <label sekarang>\t<laju>"
+    · "lapisan <label>\t<laju>\n…" (dari yang tertinggi) · "putus-sementara" / "pulih" · "berakhir" · "galat <pesan>"
+    Mode pratinjau hanya mengirim "video".
+    Mengikuti bahasa: <pesan> galat, <laju> ("3,1 Mbps" / "3.1 Mbps"), dan nama pengganti peserta/pelapor tanpa
+    nama ("Warga" / "Citizen", "Petugas" / "Officer"; bersama.js).
+-->
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0C0E0D; }
+html.pratinjau, html.pratinjau body, html.pratinjau video { background: transparent; }
+video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #0C0E0D; }
+/* Video tampil begitu bingkai pertamanya diputar: sebelumnya WebView Android menggambar poster bawaannya (ikon play
+   abu-abu), di sorotan Beranda dan kartu Live juga. Poster = piksel transparan, dan videonya memudar masuk. */
+video { opacity: 0; transition: opacity 0.25s ease-out; }
+video.diputar { opacity: 1; }
+</style>
+</head>
+<body>
+<video id="video" autoplay playsinline poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></video>
+<script src="livekit-client.umd.js"></script>
+<script src="bersama.js"></script>
+<script src="hati.js"></script>
+<script>
+'use strict';
+const { Room, RoomEvent, Track, DisconnectReason, VideoQuality } = LivekitClient;
+const layar = document.getElementById('video');
+layar.addEventListener('playing', () => layar.classList.add('diputar'));
+const PELAPOR = 'pelapor-';
+
+// Pesan galat ke Contract, dalam isi.bahasa (bersama.js). "id" sama persis dengan sebelum ada terjemahan.
+const TEKS = {
+  id: {
+    koneksiPutus: 'Koneksi ke siaran terputus.',
+    gagalPutar: 'Siaran tidak bisa diputar ({alasan}).',
+  },
+  en: {
+    koneksiPutus: 'Lost connection to the broadcast.',
+    gagalPutar: "This broadcast can't be played ({alasan}).",
+  },
+};
+const teks = Siaran.penerjemah(TEKS);
+
+let pratinjau = false;
+const kirim = (teks) => { if (!pratinjau || teks === 'video') Siaran.kirim(teks); };
+
+let ruang = null;
+let menyambung = false;
+let terhubung = false;
+let komentarKe = null;
+let sukaKe = null;
+let suka = 0;
+let mutu = 'otomatis';
+let pernahAda = false;
+let tungguPelapor = 0;
+
+const pelapor = () => [...(ruang ? ruang.remoteParticipants.values() : [])].find((p) => p.identity.startsWith(PELAPOR));
+const terbitanVideo = () => pelapor()?.getTrackPublication(Track.Source.Camera);
+
+function hitungPenonton() {
+  if (!ruang) return;
+  // Penonton lain ditambah diri sendiri, tanpa pelapor (pratinjau beranda tersembunyi dari daftar ini).
+  const lain = [...ruang.remoteParticipants.values()].filter((p) => !p.identity.startsWith(PELAPOR)).length;
+  kirim(`penonton ${lain + 1}`);
+  if (!pratinjau) Siaran.daftar(ruang, ruang.localParticipant);
+}
+
+/**
+ * Pelapor tidak ada: siaran berakhir bila ia pamit (keluar sendiri atau dikeluarkan server), bila tidak pernah muncul
+ * dalam 5 detik, atau bila tidak kembali dalam 60 detik setelah sinyalnya putus.
+ */
+function periksaPelapor(alasan) {
+  clearTimeout(tungguPelapor);
+  const p = pelapor();
+  if (p) {
+    pernahAda = true;
+    kirim(`pelapor ${p.name || Siaran.namaPeran('warga')}`);
+    return;
+  }
+  if (pernahAda && alasan === 'pamit') return selesai();
+  kirim('menunggu');
+  tungguPelapor = setTimeout(() => { if (!pelapor()) selesai(); }, pernahAda ? 60000 : 5000);
+}
+
+function selesai() {
+  clearTimeout(tungguPelapor);
+  if (ruang) {
+    const r = ruang;
+    ruang = null;
+    r.disconnect();
+  }
+  kirim('berakhir');
+}
+
+// Kualitas: otomatis = lapisan tertinggi yang muat di sinyal (server menurunkannya sendiri), atau lapisan pilihan.
+function aturMutu() {
+  const pub = terbitanVideo();
+  if (!pub) return;
+  if (pratinjau) return pub.setVideoQuality(VideoQuality.LOW);
+  const lapis = { 0: VideoQuality.LOW, 1: VideoQuality.MEDIUM, 2: VideoQuality.HIGH }[mutu];
+  pub.setVideoQuality(lapis === undefined ? VideoQuality.HIGH : lapis);
+}
+
+function fpsLapisan() {
+  try { return JSON.parse(pelapor()?.attributes?.lapisan || '{}'); } catch (e) { return {}; }
+}
+
+let lapisanLalu = '';
+let bingkaiLalu = null;
+/** Sampel kualitas terakhir { lebar, tinggi, fps, bps }: labelnya disusun saat dikirim, dalam bahasa kini. */
+let kualitasLalu = null;
+
+/** "lapisan <label>\t<laju>\n…" bila berubah (laju mengikuti bahasa). */
+function kirimLapisan() {
+  const pub = terbitanVideo();
+  if (!pub?.videoTrack) return;
+  const fps = fpsLapisan();
+  const lapisan = [...(pub.trackInfo?.layers || [])].sort((a, b) => b.height - a.height);
+  const baris = lapisan.map((l, i) => {
+    const urut = lapisan.length - 1 - i;
+    const f = fps[urut] || fps[String(urut)];
+    return `${Siaran.resolusi(l.width, l.height, f)}\t${Siaran.bitrate(l.bitrate || 0)}`;
+  }).join('\n');
+  if (baris && baris !== lapisanLalu) {
+    lapisanLalu = baris;
+    kirim(`lapisan ${baris}`);
+  }
+}
+
+function kirimKualitas() {
+  const q = kualitasLalu;
+  if (q) kirim(`kualitas ${Siaran.resolusi(q.lebar, q.tinggi, q.fps)}\t${Siaran.bitrate(q.bps)}`);
+}
+
+async function ukurKualitas() {
+  const trek = terbitanVideo()?.videoTrack;
+  if (!trek) return;
+  kirimLapisan();
+  try {
+    const s = await trek.getReceiverStats();
+    if (s && s.frameHeight) {
+      // fps dari selisih bingkai yang diurai sejak pengukuran sebelumnya (statistik penerima tidak selalu memuatnya).
+      const kini = performance.now();
+      let fps = s.framesPerSecond || 0;
+      if (!fps && bingkaiLalu && s.framesDecoded >= bingkaiLalu.n) {
+        fps = ((s.framesDecoded - bingkaiLalu.n) * 1000) / (kini - bingkaiLalu.waktu);
+      }
+      bingkaiLalu = { n: s.framesDecoded || 0, waktu: kini };
+      kualitasLalu = { lebar: s.frameWidth, tinggi: s.frameHeight, fps, bps: trek.currentBitrate || 0 };
+      kirimKualitas();
+    }
+  } catch (e) {
+    // Statistik belum ada: label kualitas tetap "AUTO".
+  }
+}
+
+async function sambung(url, token) {
+  menyambung = true;
+  ruang = new Room({ adaptiveStream: false, dynacast: false });
+  if (!pratinjau) {
+    ruang.registerTextStreamHandler('komentar', async (reader, { identity }) => {
+      const teks = await reader.readAll().catch(() => null);
+      if (teks && ruang) Siaran.komentar(ruang, identity, teks);
+    });
+    ruang.registerTextStreamHandler('suka', async (reader) => {
+      const teks = await reader.readAll().catch(() => '1');
+      const n = Math.min(50, Math.max(1, parseInt(teks, 10) || 1));
+      suka += n;
+      kirim(`suka ${suka}`);
+      hatiTamu(n);
+    });
+  }
+  ruang
+    .on(RoomEvent.TrackSubscribed, (trek, pub, peserta) => {
+      if (!peserta.identity.startsWith(PELAPOR)) return;
+      if (trek.kind === Track.Kind.Video) {
+        trek.attach(layar);
+        aturMutu();
+        kirim('video');
+      } else if (trek.kind === Track.Kind.Audio && !pratinjau) {
+        trek.attach();
+      }
+    })
+    .on(RoomEvent.ParticipantConnected, () => { hitungPenonton(); periksaPelapor('datang'); })
+    .on(RoomEvent.ParticipantNameChanged, hitungPenonton)
+    .on(RoomEvent.ParticipantDisconnected, (p, alasan) => {
+      hitungPenonton();
+      const pamit = alasan === DisconnectReason.CLIENT_INITIATED || alasan === DisconnectReason.PARTICIPANT_REMOVED;
+      periksaPelapor(p.identity.startsWith(PELAPOR) && pamit ? 'pamit' : '');
+    })
+    .on(RoomEvent.Reconnecting, () => kirim('putus-sementara'))
+    .on(RoomEvent.Reconnected, () => kirim('pulih'))
+    .on(RoomEvent.Disconnected, (alasan) => {
+      if (!ruang) return;
+      ruang = null;
+      const tamat = [DisconnectReason.ROOM_DELETED, DisconnectReason.ROOM_CLOSED, DisconnectReason.PARTICIPANT_REMOVED];
+      if (tamat.includes(alasan)) kirim('berakhir');
+      else kirim(`galat ${teks('koneksiPutus')}`);
+    });
+  try {
+    await ruang.connect(url, token, { autoSubscribe: true });
+    kirim('terhubung');
+    terhubung = true;
+    hitungPenonton();
+    periksaPelapor('');
+    if (!pratinjau) setInterval(ukurKualitas, 2000);
+  } catch (e) {
+    ruang = null;
+    kirim(`galat ${teks('gagalPutar', { alasan: e.message })}`);
+  }
+}
+
+window.terima = function (teksJson) {
+  let d;
+  try { d = JSON.parse(teksJson); } catch (e) { return; }
+  // Bahasa berganti selagi menonton: teks manusia yang sudah dikirim ditulis ulang (pratinjau tak mengirim teks).
+  if (Siaran.aturBahasa(d.bahasa) && ruang && terhubung && !pratinjau) {
+    hitungPenonton();
+    const p = pelapor();
+    if (p && !p.name) kirim(`pelapor ${Siaran.namaPeran('warga')}`);
+    kirimLapisan();
+    kirimKualitas();
+  }
+  if (d.pratinjau === true && !menyambung) {
+    pratinjau = true;
+    document.documentElement.classList.add('pratinjau');
+    layar.muted = true;
+  }
+  if (d.mutu && d.mutu !== mutu) {
+    mutu = d.mutu;
+    aturMutu();
+  }
+  // Nilai pertama hanya dicatat: yang sudah terkirim tidak dikirim lagi saat halaman menerima isi berikutnya.
+  const k = d.komentar || { n: 0, teks: '' };
+  if (komentarKe === null) komentarKe = k.n;
+  else if (k.n !== komentarKe) {
+    komentarKe = k.n;
+    const isi = decodeURIComponent(k.teks || '').trim();
+    if (isi && ruang) ruang.localParticipant.sendText(isi, { topic: 'komentar' }).catch(() => {});
+  }
+  if (sukaKe === null) sukaKe = d.suka || 0;
+  else if ((d.suka || 0) !== sukaKe) {
+    sukaKe = d.suka || 0;
+    hatiSendiri();
+    suka += 1;
+    kirim(`suka ${suka}`);
+    if (ruang) ruang.localParticipant.sendText('1', { topic: 'suka' }).catch(() => {});
+  }
+  if (d.url && d.token && !menyambung) sambung(d.url, d.token);
+};
+</script>
+</body>
+</html>

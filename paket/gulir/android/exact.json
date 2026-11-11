@@ -1,0 +1,14 @@
+{
+  "kind": "implementation",
+  "implements": "@laporin/gulir@^1.0",
+  "platform": "android",
+  "targets": ["android"],
+  "shapes": {},
+  "options": {},
+  "names": [],
+  "views": ["tanpa-garis-gulir"],
+  "hatches": [],
+  "sources": { "kotlin": ["."] },
+  "artifacts": [],
+  "class": "laporin.gulir.GulirModule"
+}
