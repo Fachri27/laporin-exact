@@ -7,6 +7,10 @@
 #
 #   sh tools/rilis-play.sh [--kirim]
 #
+# Kredensial upload paling mudah dari EAS: di laporin-apps `npx eas-cli credentials -p android` › production ›
+# credentials.json › Download credentials from EAS to credentials.json. Skrip lalu membaca jalur keystore, alias dan
+# kedua kata sandinya dari ../laporin-apps/credentials.json (diabaikan git di sana), tanpa perlu diketik.
+#
 # Yang tidak diisi lewat lingkungan ditanyakan di terminal: LAPORIN_UPLOAD_KEYSTORE (jalur .jks), LAPORIN_VERSION_CODE,
 # LAPORIN_VERSION_NAME, EXACT_UPLOAD_KEY_ALIAS, dan kedua kata sandi (EXACT_UPLOAD_STORE_PASSWORD,
 # EXACT_UPLOAD_KEY_PASSWORD) tanpa gema, jadi tidak tampil di layar dan tidak masuk riwayat shell.
@@ -44,6 +48,18 @@ tanya() {
   eval "$1=\$nilai"
   export "$1"
 }
+KREDENSIAL="$(pwd)/../laporin-apps/credentials.json"
+if [ -f "$KREDENSIAL" ]; then
+  # Satu kolom android.keystore dari credentials.json EAS; kosong bila tidak ada (lalu ditanyakan seperti biasa).
+  kolom() { "$HOME/.bun-1.4.2/bin/bun" -e 'const k=require(process.argv[1]).android?.keystore??{};const v=k[process.argv[2]];if(typeof v==="string")process.stdout.write(v)' "$KREDENSIAL" "$1" 2>/dev/null || true; }
+  jalur="$(kolom keystorePath)"
+  [ -z "$jalur" ] || case "$jalur" in /*) ;; *) jalur="$(cd ../laporin-apps && pwd)/$jalur" ;; esac
+  : "${LAPORIN_UPLOAD_KEYSTORE:=$jalur}"
+  : "${EXACT_UPLOAD_KEY_ALIAS:=$(kolom keyAlias)}"
+  : "${EXACT_UPLOAD_STORE_PASSWORD:=$(kolom keystorePassword)}"
+  : "${EXACT_UPLOAD_KEY_PASSWORD:=$(kolom keyPassword)}"
+  echo "Kredensial upload dari ../laporin-apps/credentials.json"
+fi
 tanya LAPORIN_UPLOAD_KEYSTORE "Jalur keystore upload (.jks)"
 case "$LAPORIN_UPLOAD_KEYSTORE" in "~/"*) LAPORIN_UPLOAD_KEYSTORE="$HOME/${LAPORIN_UPLOAD_KEYSTORE#\~/}" ;; esac
 [ -f "$LAPORIN_UPLOAD_KEYSTORE" ] || { echo "keystore tidak ada: $LAPORIN_UPLOAD_KEYSTORE" >&2; exit 1; }

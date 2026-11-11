@@ -215,11 +215,13 @@ APK baru.
 
 Build di Mac, unggah lewat EAS Submit (EAS Build hanya untuk proyek Expo/React Native; build ini butuh `../exact`
 bertambalan, Rust, NDK dan bun). Sekali per checkout `../exact`: `git apply` `tools/exact-rilis-android.patch` dan
-`tools/exact-notifikasi-android.patch`. Upload key dari `npx eas-cli credentials -p android` di laporin-apps.
+`tools/exact-notifikasi-android.patch`. Upload key: di laporin-apps `npx eas-cli credentials -p android` › production ›
+credentials.json › Download credentials from EAS to credentials.json; skrip membaca keystore, alias dan kata sandinya dari
+`../laporin-apps/credentials.json` (diabaikan git), sisanya ditanyakan di terminal.
 
 ```sh
-LAPORIN_UPLOAD_KEYSTORE=/jalur/upload.jks LAPORIN_VERSION_CODE=3 LAPORIN_VERSION_NAME=1.1.0 \
-EXACT_UPLOAD_STORE_PASSWORD=… EXACT_UPLOAD_KEY_ALIAS=… EXACT_UPLOAD_KEY_PASSWORD=… sh tools/rilis-play.sh --kirim
+sh tools/rilis-play.sh            # build AAB saja
+sh tools/rilis-play.sh --kirim    # build lalu unggah ke Play (internal, draft)
 ```
 
 Dengan `--kirim`, versionCode dicek dulu terhadap EAS (`build:version:get`; harus lebih besar), lalu
